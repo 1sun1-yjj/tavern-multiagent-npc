@@ -1,12 +1,3 @@
-/**
- * 模型调用层
- * ------------------------------------------------------------------
- * 相比初版，这一版补齐了观测层需要的基础设施：
- *   1. 回传 usage（prompt/completion token）——成本与用量的唯一来源
- *   2. 记录首字延迟 TTFT（time to first token）——流式体验的核心指标
- *   3. 流式请求开启 stream_options.include_usage，否则服务端不会回传用量
- *   4. 对 429 / 5xx 做指数退避重试——把偶发失败从"会话中断"降为"多等一会"
- */
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
 const MAX_RETRIES = Number(process.env.LLM_MAX_RETRIES || 2);
@@ -28,7 +19,7 @@ function buildBody({ messages, tools, toolChoice, stream }) {
   const body = { model: modelName(), messages };
   if (stream) {
     body.stream = true;
-    // ⚠️ 不加这一行，服务端不会在流末尾回传 usage，观测层的 token 统计会全部为 0
+    // 不开这个的话流末尾不会回传 usage，token 统计会一直是 0
     body.stream_options = { include_usage: true };
   }
   if (tools && tools.length) {
@@ -55,10 +46,6 @@ async function post(body, apiKey) {
   });
 }
 
-/**
- * 非流式调用。返回结构统一为：
- * { content, tool_calls, usage, latencyMs, model, attempts }
- */
 export async function chatWithModel({ messages, tools, toolChoice }) {
   const apiKey = getApiKey();
   const body = buildBody({ messages, tools, toolChoice, stream: false });
@@ -94,14 +81,6 @@ export async function chatWithModel({ messages, tools, toolChoice }) {
   throw lastErr;
 }
 
-/**
- * 流式调用。事件序列：
- *   { kind: "delta", text }
- *   { kind: "result", message, usage, ttftMs, headersMs, latencyMs, finishReason, model }
- *
- * 注意：result 在**流结束之后**才产出，因为 usage 是随最后一个数据块到达的，
- * 在 finish_reason 处提前产出会丢掉用量。
- */
 export async function* chatStream({ messages, tools, toolChoice }) {
   const apiKey = getApiKey();
   const body = buildBody({ messages, tools, toolChoice, stream: true });
@@ -144,8 +123,7 @@ export async function* chatStream({ messages, tools, toolChoice }) {
         continue;
       }
 
-      // ⚠️ usage 所在的块 choices 为空数组，必须先处理再判断 choice，
-      //    否则会被下面的 continue 直接跳过（初版就是这么丢掉用量的）。
+      // usage 单独占一个 choices 为空的块，得在判断 choice 之前取走，否则被下面的 continue 掉了
       if (data.usage) usage = data.usage;
 
       const choice = data.choices && data.choices[0];
@@ -180,6 +158,7 @@ export async function* chatStream({ messages, tools, toolChoice }) {
   }
 
   const tool_calls = toolMap.size ? [...toolMap.values()] : undefined;
+  // 结果得等流结束再发，usage 是最后一个块才到的
   yield {
     kind: "result",
     message: { role: "assistant", content, tool_calls },

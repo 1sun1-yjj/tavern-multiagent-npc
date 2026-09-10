@@ -1,11 +1,3 @@
-/**
- * 长期画像（结构化记忆）
- * ------------------------------------------------------------------
- * 存的是确定字段：顾客名字、最爱饮品、招待次数、好感度、心情、定制酒单。
- * 与向量记忆（vectorstore）的分工：
- *   - 这里是「确切知道的事实」，直接在 system prompt 里带出
- *   - 向量库是「模糊的往事」，按语义相关性召回 top-k
- */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

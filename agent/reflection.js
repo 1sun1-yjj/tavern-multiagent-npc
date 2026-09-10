@@ -1,24 +1,8 @@
-/**
- * Reflection 层（自我反思）
- * ------------------------------------------------------------------
- * Agent 四要素之一：Planning / Memory / Tool Use / **Reflection**。
- * 本项目初版缺的正是这一环。
- *
- * 做什么：在一次工具调用执行完之后，让模型回头检查
- *   「刚才这次工具调用，是否真的满足了用户这一句话的意图？」
- * 如果判定为不满足，就产出一条修正提示，交回编排循环再跑一轮。
- *
- * 为什么值得单独一层，而不是塞进主循环的 prompt：
- *   主循环里模型是"向前看"的（决定下一步做什么），
- *   Reflection 是"向后看"的（评价刚做完的事对不对）。
- *   两者的判据不同，混在一起会让模型既当运动员又当裁判。
- *
- * 成本控制：只在**发生过工具调用**时才触发；每轮对话最多触发一次；
- * 用非流式小请求，prompt 里只带必要信息。
- */
+// 工具调完之后回头看一眼：刚才那下真的满足用户意图了吗。
+// 主循环里模型是往前看的，这里是往后看的，判据不一样，所以单独放一层。
+// 只在真发生过工具调用时才跑，一轮最多一次。
 import { chatWithModel } from "./llm.js";
 
-/** 运行时读取，便于评测按套件单独开关 */
 function enabled() {
   return process.env.REFLECTION_ENABLED !== "0";
 }
@@ -37,7 +21,6 @@ const JUDGE_SYSTEM = `你是一个 Agent 执行质量审核员。你的工作是
 
 function extractJson(text) {
   if (!text) return null;
-  // 模型偶尔会包 ```json ... ```，先剥掉再找第一个平衡的 JSON 对象
   const cleaned = String(text).replace(/```(?:json)?/gi, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -49,14 +32,6 @@ function extractJson(text) {
   }
 }
 
-/**
- * 对一次（或一组）工具调用做反思。
- *
- * @param {object} args
- * @param {string} args.userText   用户这一句原话
- * @param {Array}  args.actions    本轮已执行的工具调用 [{name, args, result}]
- * @returns {Promise<{ran:boolean, verdict:"pass"|"revise", issue:string, hint:string, latencyMs:number, usage:object|null}>}
- */
 export async function reflectOnTools({ userText, actions }) {
   const empty = { ran: false, verdict: "pass", issue: "", hint: "", latencyMs: 0, usage: null };
   if (!enabled()) return empty;
@@ -78,8 +53,8 @@ export async function reflectOnTools({ userText, actions }) {
     const parsed = extractJson(res.content);
     const latencyMs = Date.now() - t0;
 
+    // 审核器自己出错时放行，不能因为它把主流程卡住
     if (!parsed || (parsed.verdict !== "pass" && parsed.verdict !== "revise")) {
-      // 判不出来就放行，不要因为审核器本身出错而卡住主流程
       return { ran: true, verdict: "pass", issue: "", hint: "", latencyMs, usage: res.usage, degraded: true };
     }
 
@@ -92,13 +67,11 @@ export async function reflectOnTools({ userText, actions }) {
       usage: res.usage,
     };
   } catch (e) {
-    // Reflection 是增强而非必需，失败必须静默降级
     console.warn("[reflection] 反思失败（已跳过）：", e.message);
     return { ...empty, ran: true, latencyMs: Date.now() - t0, degraded: true };
   }
 }
 
-/** 把反思结论转成回灌给编排循环的系统消息 */
 export function buildRevisionMessage({ issue, hint }) {
   return (
     "【自我复核未通过】你上一轮的执行有问题，请立即修正：\n" +

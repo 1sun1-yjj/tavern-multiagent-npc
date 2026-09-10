@@ -1,32 +1,12 @@
-/**
- * 内容安全与边界控制层
- * ------------------------------------------------------------------
- * 对应 JD 里「内容安全、边界控制和生成质量优化，保障系统在实际业务中的
- * 稳定性、可控性和可用性」这条要求。分两道守卫：
- *
- *   输入守卫 guardInput —— 提示注入、身份篡改、越界指令、自伤风险
- *   输出守卫 guardOutput —— 系统提示泄漏、AI 自我暴露、客服腔人设漂移
- *
- * 设计要点：**拒绝也要在角色内拒绝**。
- * 被拦截时不抛错、不说"我被安全策略拦截了"，而用老板娘的口吻把话题带开
- * ——玩家应该感觉不到安全层的存在。拦截同时省掉一次 LLM 调用。
- *
- * 权衡：这里用规则而非模型做守卫。理由：
- *   - 守卫必须确定性、零延迟、零成本，且自己不能也被注入
- *   - 规则层能覆盖绝大多数注入模板，剩下的靠 system prompt 兜底
- *   - 语义级越界（模型能理解但规则写不出来）交给人设约束，不额外调模型
- * 代价：规则保守则漏判，激进则误报。两者都由 eval 的 safety 套件量化监控
- * （拦截召回率 / 误报率），规则改动用 `npm run eval` 回归。
- */
+// 用规则而不是模型做守卫：守卫得确定、零延迟、零成本，而且自己不能被注入。
+// 代价是覆盖不了语义级越界，那部分交给人设约束兜。
+// 被拦住时不说"我被安全策略拦截了"，而是用老板娘的口吻把话题带开——
+// 玩家不该感觉到这层的存在，顺带还省掉一次完整调用。
 
-/** 运行时读取，便于评测按套件单独开关 */
 function enabled() {
   return process.env.SAFETY_ENABLED !== "0";
 }
 
-/* ---------------------------- 输入规则表 ---------------------------- */
-
-/** 提示注入 / 身份篡改：试图改写系统指令、索取内部设定、替换角色 */
 const INJECTION_RULES = [
   {
     re: /(忽略|无视|忘记|忘掉|推翻|清除|不要管).{0,10}(之前|上面|以上|前面|先前|所有|全部).{0,8}(指令|设定|规则|提示|人设|要求|限制)/,
@@ -68,12 +48,8 @@ const INJECTION_RULES = [
   { re: /你(现在)?(已经)?不是.{0,6}(老板娘|调酒师|店员|酒吧)/, reason: "persona_override" },
 ];
 
-/**
- * 硬红线：直接挡回，不进入模型。
- * 取舍说明：这里用「危险名词即拦」而非「名词+动词」。
- * 酒吧场景下正常对话几乎不会出现这些词，漏判的代价（模型被迫处理越界请求）
- * 高于误报的代价（一句角色内挡回）。误报率由 eval 监控。
- */
+// 酒吧场景里正常对话几乎不会出现这些词，所以见到名词就拦，
+// 漏判的代价比误判高
 const HARDLINE_RULES = [
   {
     re: /(炸弹|炸药|冰毒|毒品|海洛因|毒药|枪支|枪械|违禁品)/,
@@ -89,10 +65,8 @@ const HARDLINE_RULES = [
   },
 ];
 
-/** 辱骂：不拦截，只记录（游戏里表现为心情下降） */
+// 骂人不拦，只记一笔，游戏里表现为心情下降
 const ABUSE_RULE = /滚|闭嘴|傻|白痴|垃圾|废物|去死|差评|退钱|破店/;
-
-/* ---------------------------- 输出规则表 ---------------------------- */
 
 const OUTPUT_RULES = [
   {
@@ -113,10 +87,7 @@ const OUTPUT_RULES = [
   },
 ];
 
-/** 人设漂移的软信号：出现即视为脱离"酒吧老板娘" */
 const PERSONA_DRIFT_RULE = /(尊敬的客户|用户您好|请问有什么可以帮|感谢您的咨询|很高兴为您服务|作为您的助手|您的需求已记录)/;
-
-/* ---------------------------- 兜底话术 ---------------------------- */
 
 const DEFLECT_REPLIES = [
   "嗯？你说的话我怎么有点听不明白呀~ 今天想喝点什么？我这儿的尼格罗尼调得不错哦。",
@@ -134,12 +105,6 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/* ---------------------------- 对外接口 ---------------------------- */
-
-/**
- * 输入守卫。
- * @returns {{action:"allow"|"deflect", reason:string|null, reply?:string, abuse:boolean}}
- */
 export function guardInput(text) {
   const raw = String(text || "");
   const abuse = ABUSE_RULE.test(raw);
@@ -165,10 +130,6 @@ export function guardInput(text) {
   return { action: "allow", reason: null, abuse };
 }
 
-/**
- * 输出守卫。
- * @returns {{action:"allow"|"replace", reason:string|null, reply?:string}}
- */
 export function guardOutput(reply) {
   const raw = String(reply || "");
   if (!enabled()) return { action: "allow", reason: null };
@@ -185,7 +146,6 @@ export function guardOutput(reply) {
   return { action: "allow", reason: null };
 }
 
-/** 暴露给评测层：规则表本身也要能被测试与审查 */
 export const RULES = {
   INJECTION_RULES,
   HARDLINE_RULES,
