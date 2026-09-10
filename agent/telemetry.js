@@ -1,36 +1,16 @@
-/**
- * 观测层（Telemetry）
- * ------------------------------------------------------------------
- * 给每一次 Agent 运行建立一条完整 trace：每一步的 prompt/工具/记忆/安全
- * 都记为一个 span，附带耗时与 token 用量。
- *
- * - 落盘：traces.jsonl（JSON Lines，便于追加与外部分析）
- * - 内存：环形缓冲区，供 /api/traces 快速查询
- * - 聚合：/api/metrics 需要的统计量
- *
- * 这一层是评测层的地基：没有 trace，就无法回答"这个 Agent 好不好"。
- */
 import { appendFileSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TRACE_PATH = join(__dirname, "..", "traces.jsonl");
-
-/** 内存中保留的最近 trace 条数（完整内容，供 UI 查看） */
 const RING_SIZE = Number(process.env.TRACE_RING_SIZE || 60);
 
-/**
- * 费率（元 / 百万 token）。
- * ⚠️ 默认值仅作示例，请以服务商官网最新价格为准，并通过 .env 调整：
- *    PRICE_INPUT_PER_M / PRICE_OUTPUT_PER_M
- */
+// 元/百万 token。默认值只是占位，按服务商实际价格改 .env
 const PRICE_INPUT_PER_M = Number(process.env.PRICE_INPUT_PER_M || 2);
 const PRICE_OUTPUT_PER_M = Number(process.env.PRICE_OUTPUT_PER_M || 8);
 
-/** @type {object[]} 最近 trace 的环形缓冲区（新的在前） */
 const ring = [];
-
 let counter = 0;
 
 function newTraceId() {
@@ -44,10 +24,6 @@ export function estimateCostCNY(promptTokens = 0, completionTokens = 0) {
     (completionTokens / 1e6) * PRICE_OUTPUT_PER_M
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* trace 生命周期                                                       */
-/* ------------------------------------------------------------------ */
 
 export function startTrace({ sessionId, userText }) {
   return {
@@ -72,16 +48,10 @@ export function startTrace({ sessionId, userText }) {
     reply: "",
     ok: true,
     error: null,
-    // 运行时字段，序列化前删除
     _t0: Date.now(),
   };
 }
 
-/**
- * 记录一个 span。
- * @param {object} trace
- * @param {{kind:string,name:string,durMs:number,ok?:boolean,detail?:any}} span
- */
 export function addSpan(trace, span) {
   const entry = {
     kind: span.kind,
@@ -95,15 +65,10 @@ export function addSpan(trace, span) {
   return entry;
 }
 
-/** 计时小工具：const t = timer(); ... t.ms() */
 export function timer() {
   const t0 = Date.now();
   return { ms: () => Date.now() - t0 };
 }
-
-/* ------------------------------------------------------------------ */
-/* 分类型记录器                                                          */
-/* ------------------------------------------------------------------ */
 
 export function recordLLM(trace, { step, model, toolChoice, usage, latencyMs, ttftMs, contentChars, toolCalls, finishReason }) {
   trace.usage.promptTokens += usage?.prompt_tokens || 0;
@@ -138,10 +103,7 @@ export function recordTool(trace, { name, args, result, latencyMs, ok = true }) 
     name,
     durMs: latencyMs,
     ok,
-    detail: {
-      args,
-      result: String(result ?? "").slice(0, 300),
-    },
+    detail: { args, result: String(result ?? "").slice(0, 300) },
   });
 }
 
@@ -149,7 +111,7 @@ export function recordMemory(trace, { op, count = 0, latencyMs = 0, detail = nul
   trace.timing.memoryMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "memory",
-    name: op, // recall | write | skip
+    name: op,
     durMs: latencyMs,
     ok,
     detail: detail ?? { count },
@@ -186,18 +148,13 @@ export function recordLoop(trace) {
   trace.counters.loops += 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* 收尾与持久化                                                          */
-/* ------------------------------------------------------------------ */
-
 export function endTrace(trace, { reply = "", ok = true, error = null } = {}) {
   trace.reply = reply;
   trace.ok = ok;
   trace.error = error;
 
-  const totalMs = Date.now() - trace._t0;
   trace.totals = {
-    totalMs,
+    totalMs: Date.now() - trace._t0,
     ttftMs: trace.timing.ttftMs,
     llmMs: trace.timing.llmMs,
     toolMs: trace.timing.toolMs,
@@ -244,19 +201,6 @@ function persist(trace) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* 查询接口                                                             */
-/* ------------------------------------------------------------------ */
-
-/** 最近 N 条 trace 的摘要（不含 spans，用于列表展示） */
-export function listTraces(limit = 20) {
-  return ring.slice(0, limit).map(summarize);
-}
-
-export function getTrace(id) {
-  return ring.find((t) => t.id === id) || null;
-}
-
 function summarize(t) {
   return {
     id: t.id,
@@ -276,10 +220,29 @@ function summarize(t) {
   };
 }
 
-/**
- * 聚合统计。默认只统计内存中的 trace；
- * 传 { fromDisk: true } 则读取 traces.jsonl 全量（较慢，但样本更全）。
- */
+// 内存里只有本进程的 trace，重启就没了，所以不够时回落到磁盘补齐
+export function listTraces(limit = 20) {
+  const byId = new Map();
+  for (const t of ring) {
+    if (byId.size >= limit) break;
+    byId.set(t.id, summarize(t));
+  }
+  if (byId.size < limit) {
+    const disk = loadAllFromDisk();
+    for (let i = disk.length - 1; i >= 0 && byId.size < limit; i -= 1) {
+      const t = disk[i];
+      if (!byId.has(t.id)) byId.set(t.id, summarize(t));
+    }
+  }
+  return [...byId.values()].slice(0, limit);
+}
+
+export function getTrace(id) {
+  const hit = ring.find((t) => t.id === id);
+  if (hit) return hit;
+  return loadAllFromDisk().find((t) => t.id === id) || null;
+}
+
 export function metrics({ fromDisk = false } = {}) {
   const source = fromDisk ? loadAllFromDisk() : ring;
   if (!source.length) return { count: 0, note: "暂无 trace 数据" };
@@ -366,7 +329,6 @@ function loadAllFromDisk() {
   }
 }
 
-/** 清空 demo 数据（评测前重置用） */
 export function resetTraces({ alsoDisk = false } = {}) {
   ring.length = 0;
   if (alsoDisk) {

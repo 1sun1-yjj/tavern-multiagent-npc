@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * 观测指标 CLI
- * ------------------------------------------------------------------
- * 从 traces.jsonl 汇总真实运行数据：延迟、首字延迟、token、成本、
- * 工具调用分布、反思触发、安全拦截率。
- *
- * 用法：
- *   npm run metrics
- *   node eval/metrics.js --json     输出原始 JSON
- */
 import "dotenv/config";
 import { metrics } from "../agent/telemetry.js";
 
@@ -27,7 +17,9 @@ if (!m.count) {
 
 function pad(s, w) {
   let len = 0;
-  for (const ch of String(s)) len += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
+  for (const ch of String(s)) {
+    len += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
+  }
   return String(s) + " ".repeat(Math.max(0, w - len));
 }
 
@@ -64,6 +56,6 @@ console.log("  【安全与可靠性】");
 line("安全拦截次数", `${m.safety.blocks}（${(m.safety.blockRate * 100).toFixed(2)}%）`);
 line("失败请求", `${m.reliability.failed}（${(m.reliability.failRate * 100).toFixed(2)}%）`);
 console.log("");
-console.log("  提示：费率默认值为示例，请在 .env 中按官网最新价格调整");
+console.log("  提示：费率默认值是占位的，按官网实际价格改 .env 里的");
 console.log("        PRICE_INPUT_PER_M / PRICE_OUTPUT_PER_M");
 console.log("");

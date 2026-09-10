@@ -1,17 +1,3 @@
-/**
- * Agent 编排循环
- * ------------------------------------------------------------------
- * 流程：安全守卫 → 意图识别 → 记忆召回 → Prompt 组装
- *       → LLM(流式) → 工具调用 → 反思复核 → 循环(≤6)
- *       → 输出守卫 → 记忆写入 → 收尾
- *
- * 三层记忆：
- *   1. 结构化长期画像（memory.json）—— 名字/最爱/次数等确定字段
- *   2. 向量语义检索（vectorstore.json）—— 模糊往事，top-k 召回
- *   3. 对话历史 LLM 摘要压缩 —— 超出窗口时把旧对话浓缩成一句
- *
- * 每一步都写入 telemetry trace，供 /api/traces 与评测层使用。
- */
 import { chatWithModel, chatStream } from "./llm.js";
 import { toolDefinitions, toolImplementations } from "./tools.js";
 import { loadProfile, saveProfile } from "./memory.js";
@@ -34,7 +20,6 @@ import {
   recordLoop,
 } from "./telemetry.js";
 
-/** 编排循环的最大轮数，防止模型陷入工具调用死循环 */
 const MAX_LOOPS = Number(process.env.MAX_AGENT_LOOPS || 6);
 const HISTORY_LIMIT = 16;
 const HISTORY_KEEP_RECENT = 8;
@@ -60,7 +45,6 @@ const PERSONA = `你是星布谷地里一家小小酒吧的老板娘兼调酒师
 - 口语化、有温度、像真人，别像客服背稿。
 - 两三句话收尾，别长篇大论；除非顾客主动聊，否则别介绍自己。`;
 
-/** 导出以便评测层直接断言"记忆是否真的被注入了 prompt" */
 export function buildSystemPrompt(profile, eggHint = "", memoryNote = "") {
   const known = [];
   if (profile.customerName) known.push(`顾客的名字是「${profile.customerName}」。`);
@@ -86,16 +70,11 @@ function updateProfileFromReply(profile, userText, reply) {
   }
 }
 
-/**
- * 主入口。
- * @param {{userText:string, messages:Array, sessionId?:string}} args
- */
 export async function* runAgentStream({ userText, messages, sessionId = "default" }) {
   const trace = startTrace({ sessionId, userText });
   const profile = loadProfile();
 
   try {
-    /* ---------- 1. 输入守卫 ---------- */
     const tGuard = timer();
     const inGuard = guardInput(userText);
     recordSafety(trace, {
@@ -107,8 +86,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
     });
 
     if (inGuard.action === "deflect") {
-      // 被拦截：不进模型，直接给角色内挡回话术。
-      // 这同时省掉了一次 LLM 调用（零 token 成本、零延迟）。
       yield { type: "safety", stage: "input", action: "block", reason: inGuard.reason };
       yield { type: "delta", text: inGuard.reply };
 
@@ -128,7 +105,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       return;
     }
 
-    /* ---------- 2. 意图识别（纯本地，无 IO） ---------- */
     const { intent, tool } = detectIntent(userText);
     const forcedTool = tool ? { type: "function", function: { name: tool } } : null;
     addSpan(trace, {
@@ -138,10 +114,8 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       detail: { forcedTool: tool, forced: Boolean(tool) },
     });
 
-    /* ---------- 3. 彩蛋判定 ---------- */
     const egg = detectEasterEgg(userText, profile);
 
-    /* ---------- 4. 记忆召回（向量层） ---------- */
     let memoryNote = "";
     if (vectorEnabled()) {
       const tMem = timer();
@@ -157,14 +131,12 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       recordMemory(trace, { op: "recall", count: 0, latencyMs: 0, detail: { skipped: "vector_disabled" } });
     }
 
-    /* ---------- 5. 组装上下文 ---------- */
     const msgs = [
       { role: "system", content: buildSystemPrompt(profile, egg.hint, memoryNote) },
       ...messages,
       { role: "user", content: userText },
     ];
 
-    /* ---------- 6. 编排循环 ---------- */
     const actions = [];
     let reply = "";
     let loops = 0;
@@ -180,7 +152,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       for await (const ev of chatStream({ messages: msgs, tools: toolDefinitions, toolChoice })) {
         if (ev.kind === "delta") {
           stepContent += ev.text;
-          // 边到边推，保证前端首字体验
           yield { type: "delta", text: ev.text };
         } else if (ev.kind === "result") {
           message = ev.message;
@@ -205,7 +176,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
         });
       }
 
-      // 有工具调用：执行 → 记录 → 反思 → 回到循环
       if (message && message.tool_calls && message.tool_calls.length) {
         msgs.push(message);
 
@@ -218,7 +188,7 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
             args = {};
           }
 
-          // 幂等保护：同一次对话里只允许原创一杯，避免模型重复调用
+          // 一次对话里只允许原创一杯，否则模型会反复调
           if (name === "inventDrink" && inventedOnce) {
             const result = "这杯酒已经原创好了，别再重复创作；直接把刚才那杯端给客人，并用一句话回答即可。";
             msgs.push({ role: "tool", tool_call_id: tc.id, content: String(result) });
@@ -255,7 +225,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
           yield { type: "action", name, args, result: String(result) };
         }
 
-        /* ---- Reflection：工具调用执行完之后自评一次 ---- */
         if (reflectionEnabled() && !reflectedOnce) {
           reflectedOnce = true;
           const r = await reflectOnTools({ userText, actions });
@@ -282,7 +251,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
         continue;
       }
 
-      // 没有工具调用：这一轮就是最终答复
       message = message || {};
       reply = message.content || stepContent || reply;
       break;
@@ -290,7 +258,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
 
     if (!reply) reply = "哎呀…我一时忙不过来了，能再跟我说一遍吗？";
 
-    /* ---------- 7. 输出守卫 ---------- */
     const tOut = timer();
     const outGuard = guardOutput(reply);
     recordSafety(trace, {
@@ -305,7 +272,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       reply = outGuard.reply;
     }
 
-    /* ---------- 8. 会话历史与长期画像 ---------- */
     messages.push({ role: "user", content: userText });
     messages.push({ role: "assistant", content: reply });
 
@@ -322,7 +288,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
     const gameUpdate = updateGameState(profile, signals);
     saveProfile(profile);
 
-    /* ---------- 9. 记忆写入（有选择性，不是全都记） ---------- */
     const memorable =
       signals.ordered || signals.paid || signals.saidName ||
       actions.some((a) => a.name === "inventDrink");
@@ -350,7 +315,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
       });
     }
 
-    /* ---------- 10. 上下文压缩 ---------- */
     if (messages.length > HISTORY_LIMIT) {
       const tCompact = timer();
       await compactHistory(messages, trace);
@@ -375,10 +339,6 @@ export async function* runAgentStream({ userText, messages, sessionId = "default
     throw e;
   }
 }
-
-/* ------------------------------------------------------------------ */
-/* 辅助：上下文压缩与记忆提炼                                            */
-/* ------------------------------------------------------------------ */
 
 async function compactHistory(messages, trace) {
   const dropCount = messages.length - HISTORY_KEEP_RECENT;

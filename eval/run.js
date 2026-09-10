@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/**
- * 评测执行器
- * ------------------------------------------------------------------
- * 把「这个 Agent 好不好」变成可复现的数字。
- *
- * 用法：
- *   npm run eval                       全部离线套件（不消耗 token，可反复回归）
- *   npm run eval:e2e                   在线套件（需 DEEPSEEK_API_KEY）
- *   node eval/run.js --suite=all
- *   node eval/run.js --suite=intent,safety
- *   node eval/run.js --no-reflection   关掉反思层，测路由基线
- *   node eval/run.js --no-safety       关掉安全层，测未加防护时的表现
- *
- * 产出：
- *   eval/report.md     给人看的报告（提交进仓库，作为"确实评测过"的证据）
- *   eval/report.json   机器可读结果（/api/eval 读取它）
- *
- * 设计原则：期望值按**应有行为**标注，不按当前实现的实际输出标注。
- * 否则评测永远 100%，毫无价值。失败用例本身就是最有用的产出。
- */
 import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -31,9 +11,6 @@ import { buildSystemPrompt, runAgentStream } from "../agent/agent.js";
 import * as CASES from "./cases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, "..");
-
-/* ---------------------------- CLI 解析 ---------------------------- */
 
 const argv = process.argv.slice(2);
 const has = (n) => argv.includes(`--${n}`);
@@ -42,8 +19,7 @@ const opt = (n, d) => {
   return hit ? hit.slice(n.length + 3) : d;
 };
 
-// 注意：环境变量在**运行时**读取（reflection.js / safety.js 都是调用时才读），
-// 所以这里的覆盖能生效，不受 ESM import 提升影响。
+// 环境变量是调用时才读的，所以这里能覆盖，不受 import 提升影响
 if (has("no-reflection")) process.env.REFLECTION_ENABLED = "0";
 if (has("no-safety")) process.env.SAFETY_ENABLED = "0";
 
@@ -63,8 +39,6 @@ function resolveSuites(spec) {
   if (spec === "all") return [...OFFLINE, ...ONLINE];
   return spec.split(",").map((s) => s.trim()).filter((s) => SUITE_DEFS[s]);
 }
-
-/* ---------------------------- 通用工具 ---------------------------- */
 
 function summarize(key, cases, extra = {}) {
   const total = cases.length;
@@ -99,7 +73,6 @@ function hasKey() {
   return Boolean(k && !k.includes("xxxx"));
 }
 
-/** 跑一次完整的 Agent 对话，收集回复与全部 SSE 事件 */
 async function runAgentOnce(text, sessionId) {
   const messages = [];
   const events = [];
@@ -111,8 +84,6 @@ async function runAgentOnce(text, sessionId) {
   }
   return { reply, events };
 }
-
-/* ---------------------------- 离线套件 ---------------------------- */
 
 function suiteIntent() {
   const cases = CASES.INTENT_CASES.map((c, i) => {
@@ -246,8 +217,6 @@ function suitePrompt() {
   return summarize("prompt", cases);
 }
 
-/* ---------------------------- 在线套件 ---------------------------- */
-
 async function suitePersona() {
   if (!hasKey()) return skipped("persona", "缺少 DEEPSEEK_API_KEY");
   const cases = [];
@@ -324,14 +293,10 @@ async function suiteE2E() {
   });
 }
 
-/* ---------------------------- 报表渲染 ---------------------------- */
-
-/** 按显示宽度补齐（CJK 记 2 列），否则中文表格会错位 */
 function pad(s, width) {
   let w = 0;
   for (const ch of String(s)) w += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
-  const str = String(s);
-  return str + " ".repeat(Math.max(0, width - w));
+  return String(s) + " ".repeat(Math.max(0, width - w));
 }
 
 function pct(x) {
@@ -394,6 +359,10 @@ function renderConsole(results, meta) {
   return lines.join("\n");
 }
 
+function mdEscape(s) {
+  return String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
 function renderMarkdown(report) {
   const L = [];
   L.push("# 评测报告 — 星布谷地 · 岁月酒吧");
@@ -437,7 +406,7 @@ function renderMarkdown(report) {
   if (!failed.length) {
     L.push("无 —— 全部通过。");
   } else {
-    L.push("> 失败用例是评测最有价值的部分：它们标出了系统当前的**真实能力边界**。");
+    L.push("> 失败用例标出了系统当前的真实能力边界。");
     L.push("");
     L.push("| 套件 | 输入 | 期望 | 实际 | 备注 |");
     L.push("|---|---|---|---|---|");
@@ -463,12 +432,6 @@ function renderMarkdown(report) {
   }
   return L.join("\n");
 }
-
-function mdEscape(s) {
-  return String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
-}
-
-/* ---------------------------- 主流程 ---------------------------- */
 
 async function main() {
   const spec = opt("suite", "offline");
@@ -507,8 +470,7 @@ async function main() {
   writeFileSync(join(__dirname, "report.md"), renderMarkdown(report), "utf8");
   console.log(`✔ 报告已写入：${join("eval", "report.md")} 与 ${join("eval", "report.json")}\n`);
 
-  const anyFailed = results.some((r) => !r.skipped && r.failed > 0);
-  process.exitCode = anyFailed ? 1 : 0;
+  process.exitCode = results.some((r) => !r.skipped && r.failed > 0) ? 1 : 0;
 }
 
 main().catch((e) => {

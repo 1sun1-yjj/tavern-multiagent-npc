@@ -144,7 +144,7 @@ function renderCards(m) {
     c("总 tokens", m.tokens.total, "平均 " + m.tokens.avgPerRequest + "/轮"),
     c("总成本（估）", "¥" + num(m.cost.totalCNY, 4), "平均 ¥" + num(m.cost.avgCNY, 6)),
     c("平均编排轮数", num(m.agent.avgLoops, 2), "平均工具调用 " + num(m.agent.avgToolCalls, 2)),
-    c("反思 / 触发重试", m.agent.reflections + " / " + m.agent.reflectionRetries, "自评否决不通过次数"),
+    c("反思 / 触发重试", m.agent.reflections + " / " + m.agent.reflectionRetries, "自评判定不通过的次数"),
     c("安全拦截", m.safety.blocks, (m.safety.blockRate * 100).toFixed(2) + "%"),
   ].join("");
 }
@@ -263,7 +263,7 @@ async function loadAll() {
   } catch (e) {
     $("cards").innerHTML = `<div class="card"><div class="k">加载失败</div><div class="v">!</div><div class="s">${esc(e.message)}</div></div>`;
   }
-  try { renderEval(await getJSON("/api/eval")); } catch { /* 还没跑过评测 */ }
+  try { renderEval(await getJSON("/api/eval")); } catch {}
 }
 
 $("refresh").onclick = loadAll;
