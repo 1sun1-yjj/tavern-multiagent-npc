@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>观测台 · 星布谷地 · 岁月酒吧</title>
+<style>
+  :root {
+    --bg: #14110f;
+    --panel: #1d1916;
+    --panel2: #262019;
+    --line: #3a3129;
+    --fg: #ece3d4;
+    --dim: #9a8d7c;
+    --accent: #e8b96b;
+    --llm: #5b9bd5;
+    --tool: #6fbf73;
+    --memory: #a97bd6;
+    --safety: #e08a3c;
+    --reflection: #d6689a;
+    --intent: #7c8a99;
+    --bad: #e05c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.6 "SF Mono", Menlo, Consolas, "Microsoft YaHei", monospace;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #221c17, #1a1613);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 15px; color: var(--accent); font-weight: 600; }
+  header .sp { flex: 1; }
+  a.btn, button.btn {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    padding: 5px 12px; border-radius: 5px; cursor: pointer; font: inherit; text-decoration: none;
+  }
+  a.btn:hover, button.btn:hover { border-color: var(--accent); color: var(--accent); }
+  .wrap { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  h2 { font-size: 13px; color: var(--dim); font-weight: 600; margin: 22px 0 10px; letter-spacing: .5px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card .k { color: var(--dim); font-size: 11px; }
+  .card .v { font-size: 20px; color: var(--accent); margin-top: 4px; font-weight: 600; }
+  .card .s { color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+  .cols { display: grid; grid-template-columns: 320px 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+  .list { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .list .item { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .list .item:last-child { border-bottom: 0; }
+  .list .item:hover { background: var(--panel2); }
+  .list .item.on { background: #322a20; border-left: 3px solid var(--accent); padding-left: 9px; }
+  .list .item .q { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list .item .m { color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .empty { padding: 24px; text-align: center; color: var(--dim); }
+
+  .detail { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-height: 200px; }
+  .detail .reply {
+    background: var(--panel2); border-left: 3px solid var(--accent);
+    padding: 9px 12px; border-radius: 0 6px 6px 0; margin: 10px 0 16px; white-space: pre-wrap;
+  }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--dim); font-size: 12px; margin-bottom: 4px; }
+  .kv b { color: var(--fg); font-weight: 600; }
+
+  .wf { margin-top: 6px; }
+  .wf .row { display: grid; grid-template-columns: 150px 1fr 190px; gap: 10px; align-items: center; padding: 3px 0; border-bottom: 1px dashed #2b241d; }
+  .wf .row:last-child { border-bottom: 0; }
+  .kind-badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 10px; color: #14110f; font-weight: 700; min-width: 62px; text-align: center; }
+  .track { position: relative; height: 16px; background: #191512; border-radius: 3px; overflow: hidden; }
+  .bar { position: absolute; top: 0; height: 100%; border-radius: 3px; min-width: 2px; opacity: .92; }
+  .metric { color: var(--dim); font-size: 11px; text-align: right; }
+  .fail .kind-badge { outline: 1.5px solid var(--bad); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 9px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; }
+  td.num { text-align: right; }
+  .ok { color: var(--tool); } .no { color: var(--bad); }
+  .bar-outer { height: 5px; background: #2b241d; border-radius: 3px; overflow: hidden; width: 90px; display: inline-block; vertical-align: middle; }
+  .bar-inner { height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 观测台 · 星布谷地 · 岁月酒吧</h1>
+  <span class="sp"></span>
+  <label style="color:var(--dim)"><input type="checkbox" id="auto"> 自动刷新</label>
+  <button class="btn" id="refresh">刷新</button>
+  <a class="btn" href="/">← 回到酒吧</a>
+</header>
+
+<div class="wrap">
+  <h2>运行指标（来自 traces.jsonl）</h2>
+  <div class="cards" id="cards"><div class="card"><div class="k">加载中…</div></div></div>
+
+  <h2>评测报告（eval/report.json）</h2>
+  <div id="eval"><div class="empty">还没有评测报告。运行 <code>npm run eval</code> 后刷新。</div></div>
+
+  <h2>执行追踪</h2>
+  <div class="cols">
+    <div class="list" id="list"><div class="empty">暂无 trace。去酒吧说句话吧。</div></div>
+    <div class="detail" id="detail"><div class="empty">← 选择左侧一条 trace 查看完整执行链路</div></div>
+  </div>
+</div>
+
+<script>
+const KIND_COLOR = {
+  llm: "var(--llm)", tool: "var(--tool)", memory: "var(--memory)",
+  safety: "var(--safety)", reflection: "var(--reflection)", intent: "var(--intent)",
+};
+const KIND_LABEL = {
+  llm: "LLM", tool: "工具", memory: "记忆", safety: "安全",
+  reflection: "反思", intent: "意图",
+};
+
+let selectedId = null;
+let traces = [];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (n, d = 0) => (n == null ? "—" : Number(n).toFixed(d));
+
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+  return res.json();
+}
+
+function renderCards(m) {
+  if (!m || !m.count) {
+    $("cards").innerHTML = '<div class="card"><div class="k">暂无数据</div><div class="v">0</div><div class="s">先去酒吧聊几句</div></div>';
+    return;
+  }
+  const c = (k, v, s) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s || ""}</div></div>`;
+  $("cards").innerHTML = [
+    c("trace 样本", m.count, m.source === "traces.jsonl" ? "全量落盘数据" : "内存缓冲"),
+    c("平均耗时", num(m.latency.avgTotalMs) + " ms", "端到端"),
+    c("平均首字延迟", m.latency.avgTtftMs == null ? "—" : num(m.latency.avgTtftMs) + " ms", m.latency.ttftSamples + " 个样本"),
+    c("总 tokens", m.tokens.total, "平均 " + m.tokens.avgPerRequest + "/轮"),
+    c("总成本（估）", "¥" + num(m.cost.totalCNY, 4), "平均 ¥" + num(m.cost.avgCNY, 6)),
+    c("平均编排轮数", num(m.agent.avgLoops, 2), "平均工具调用 " + num(m.agent.avgToolCalls, 2)),
+    c("反思 / 触发重试", m.agent.reflections + " / " + m.agent.reflectionRetries, "自评否决不通过次数"),
+    c("安全拦截", m.safety.blocks, (m.safety.blockRate * 100).toFixed(2) + "%"),
+  ].join("");
+}
+
+function renderEval(e) {
+  if (!e || !e.results) return;
+  const rows = e.results.map((r) => {
+    if (r.skipped) return `<tr><td>${esc(r.label)}</td><td class="num">—</td><td>跳过（${esc(r.reason)}）</td></tr>`;
+    const p = (r.accuracy * 100);
+    return `<tr>
+      <td>${esc(r.label)}</td>
+      <td class="num">${r.passed}/${r.total}</td>
+      <td><span class="bar-outer"><span class="bar-inner" style="width:${p}%"></span></span> ${p.toFixed(1)}%</td>
+    </tr>`;
+  }).join("");
+  $("eval").innerHTML = `<table><thead><tr><th>套件</th><th>通过</th><th>准确率</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="kv" style="margin-top:8px"><span>生成于 <b>${esc(e.meta.at)}</b></span><span>复现：<b>npm run eval</b></span></div>`;
+}
+
+function renderList() {
+  if (!traces.length) {
+    $("list").innerHTML = '<div class="empty">暂无 trace。去酒吧说句话吧。</div>';
+    return;
+  }
+  $("list").innerHTML = traces.map((t) => `
+    <div class="item ${t.id === selectedId ? "on" : ""}" data-id="${esc(t.id)}">
+      <div class="q">${esc(t.userText || "(空)")}</div>
+      <div class="m">${esc((t.startedAt || "").slice(11, 19))} ｜ ${t.totalMs}ms ｜ ${t.totalTokens}tok ｜ 工具${t.toolCalls}${t.safetyBlocks ? ' ｜ <span style="color:var(--safety)">拦截</span>' : ""}${t.reflectionRetries ? ' ｜ <span style="color:var(--reflection)">反思重试</span>' : ""}</div>
+    </div>`).join("");
+  $("list").querySelectorAll(".item").forEach((el) => {
+    el.onclick = () => { selectedId = el.dataset.id; renderList(); openTrace(selectedId); };
+  });
+}
+
+function detailOf(s) {
+  const d = s.detail || {};
+  if (s.kind === "llm") {
+    const parts = [];
+    if (d.toolChoice) parts.push("choice=" + d.toolChoice);
+    if (d.promptTokens != null) parts.push("in " + d.promptTokens);
+    if (d.completionTokens != null) parts.push("out " + d.completionTokens);
+    if (d.ttftMs != null) parts.push("ttft " + d.ttftMs + "ms");
+    if (d.contentChars) parts.push("chars " + d.contentChars);
+    if (d.toolCalls && d.toolCalls.length) parts.push("→ " + d.toolCalls.join(","));
+    return parts.join(" ｜ ");
+  }
+  if (s.kind === "tool") return "args " + JSON.stringify(d.args) + " ｜ " + String(d.result || "").slice(0, 60);
+  if (s.kind === "memory") {
+    if (d.items) return d.count + " 条命中" + (d.items.length ? "：" + d.items.map((x) => "「" + x + "」").join(" ") : "");
+    if (d.text) return "写入「" + d.text + "」";
+    if (d.reason) return "跳过：" + d.reason;
+    return "";
+  }
+  if (s.kind === "safety") return s.detail.action + (s.detail.reason ? "：" + s.detail.reason : "");
+  if (s.kind === "reflection") return d.verdict + (d.issue ? "：" + d.issue : "") + (d.retried ? " → 已重试" : "");
+  if (s.kind === "intent") return d.forced ? "强制工具 " + d.forcedTool : "无强制";
+  return "";
+}
+
+async function openTrace(id) {
+  let t;
+  try { t = await getJSON("/api/traces/" + encodeURIComponent(id)); }
+  catch (e) { $("detail").innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; return; }
+
+  const total = Math.max(1, t.totals.totalMs);
+  const rows = (t.spans || []).map((s) => {
+    const color = KIND_COLOR[s.kind] || "var(--intent)";
+    const left = (s.atMs / total) * 100;
+    const width = Math.max(0.6, (s.durMs / total) * 100);
+    return `<div class="row ${s.ok ? "" : "fail"}">
+      <div><span class="kind-badge" style="background:${color}">${KIND_LABEL[s.kind] || s.kind}</span> <span style="color:var(--dim)">${esc(s.name)}</span></div>
+      <div class="track"><span class="bar" style="left:${left}%;width:${width}%;background:${color}"></span></div>
+      <div class="metric">${s.durMs}ms ｜ ${esc(detailOf(s))}</div>
+    </div>`;
+  }).join("");
+
+  const x = t.totals;
+  $("detail").innerHTML = `
+    <div class="kv">
+      <span>trace <b>${esc(t.id)}</b></span>
+      <span>会话 <b>${esc(t.sessionId)}</b></span>
+      <span>${esc(t.startedAt.replace("T", " ").slice(0, 19))}</span>
+      <span>结果 <b class="${t.ok ? "ok" : "no"}">${t.ok ? "成功" : "失败"}</b></span>
+    </div>
+    <div style="margin-top:10px"><span style="color:var(--dim)">用户：</span>${esc(t.userText)}</div>
+    <div class="reply">${esc(t.reply || "(无回复)")}</div>
+    <div class="kv">
+      <span>端到端 <b>${x.totalMs}ms</b></span>
+      <span>首字 <b>${x.ttftMs == null ? "—" : x.ttftMs + "ms"}</b></span>
+      <span>LLM <b>${x.llmMs}ms</b></span>
+      <span>记忆 <b>${x.memoryMs}ms</b></span>
+      <span>反思 <b>${x.reflectionMs}ms</b></span>
+      <span>安全 <b>${x.safetyMs}ms</b></span>
+      <span>tokens <b>${x.totalTokens}</b>（in ${x.promptTokens} / out ${x.completionTokens}）</span>
+      <span>成本 <b>¥${x.costCNY}</b></span>
+      <span>轮数 <b>${x.loops}</b></span>
+      <span>工具 <b>${x.toolCalls}</b></span>
+    </div>
+    <h2 style="margin-top:18px">执行链路（按时间轴）</h2>
+    <div class="wf">${rows || '<div class="empty">无 span</div>'}</div>`;
+
+  selectedId = id;
+}
+
+async function loadAll() {
+  try {
+    const [m, tr] = await Promise.all([
+      getJSON("/api/metrics?disk=1"),
+      getJSON("/api/traces?limit=40"),
+    ]);
+    renderCards(m);
+    traces = tr.traces || [];
+    renderList();
+    if (selectedId && !traces.some((t) => t.id === selectedId)) selectedId = null;
+    if (selectedId) openTrace(selectedId);
+  } catch (e) {
+    $("cards").innerHTML = `<div class="card"><div class="k">加载失败</div><div class="v">!</div><div class="s">${esc(e.message)}</div></div>`;
+  }
+  try { renderEval(await getJSON("/api/eval")); } catch { /* 还没跑过评测 */ }
+}
+
+$("refresh").onclick = loadAll;
+let timer = null;
+$("auto").onchange = (e) => {
+  if (timer) { clearInterval(timer); timer = null; }
+  if (e.target.checked) timer = setInterval(loadAll, 3000);
+};
+loadAll();
+</script>
+</body>
+</html>

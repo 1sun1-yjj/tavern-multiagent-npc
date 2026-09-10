@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>星布谷地 · 岁月酒吧</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="title" style="position:relative">
+      🍸 星布谷地 · 岁月酒吧
+      <a href="/obs.html" target="_blank" title="查看 Agent 执行追踪、token 成本与评测结果"
+         style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:400;
+                color:#f0d9a8;text-decoration:none;border:1px solid rgba(240,217,168,.45);
+                padding:3px 9px;border-radius:5px;white-space:nowrap">🔍 观测台</a>
+    </header>
+
+    <div class="scene">
+      <canvas id="scene" width="384" height="216"></canvas>
+    </div>
+
+    <div class="chat">
+      <div id="messages" class="messages"></div>
+      <div class="input-row">
+        <input id="input" type="text"
+               placeholder="跟老板娘说点什么…（例：给我来一杯尼格罗尼）"
+               autocomplete="off" />
+        <button id="orderBtn" title="打开酒单">🍸 点酒</button>
+        <button id="customBtn" title="定制一杯酒">🎨 定制</button>
+        <button id="menuBtn" title="查看私密菜单">📖 私单</button>
+        <button id="send">发送</button>
+      </div>
+    </div>
+
+    <div id="status" class="status">正在连接老板娘…</div>
+  </div>
+
+  <div id="drinkMenu" class="drink-menu hidden">
+    <div class="drink-menu-box">
+      <div class="drink-menu-head">
+        <span>🍸 今天喝点什么？</span>
+        <button id="drinkMenuClose">✕</button>
+      </div>
+      <img id="drinkMenuImg" src="assets/drinks.png" alt="酒单" />
+      <div class="drink-menu-tip">点一下你想要的酒👇</div>
+    </div>
+  </div>
+
+  <div id="customDrink" class="drink-menu hidden">
+    <div class="drink-menu-box">
+      <div class="drink-menu-head">
+        <span>🎨 定制一杯</span>
+        <button id="customDrinkClose">✕</button>
+      </div>
+      <div class="custom-row"><span>基酒</span><div class="chips" id="cd-spirit"></div></div>
+      <div class="custom-row"><span>配料</span><div class="chips" id="cd-mixer"></div></div>
+      <div class="custom-row"><span>甜度</span><div class="chips" id="cd-sweet"></div></div>
+      <div class="custom-row"><span>冰</span><div class="chips" id="cd-ice"></div></div>
+      <div class="custom-row"><span>名字</span>
+        <input id="cd-name" type="text" placeholder="可留空，让老板娘起名" autocomplete="off" />
+      </div>
+      <button id="cd-confirm" class="cd-confirm">🍸 调制这杯</button>
+      <div class="drink-menu-tip">选好材料，老板娘会现场起名、编配方端给你</div>
+    </div>
+  </div>
+
+  <div id="privateMenu" class="drink-menu hidden">
+    <div class="drink-menu-box">
+      <div class="drink-menu-head">
+        <span>📖 你的私密菜单</span>
+        <button id="privateMenuClose">✕</button>
+      </div>
+      <div id="privateMenuList" class="private-list"></div>
+      <div class="drink-menu-tip">这些是你定制过的酒，报名字随时能再点</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

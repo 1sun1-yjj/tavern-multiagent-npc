@@ -1,0 +1,17 @@
+node_modules/
+.npm-cache/
+
+# 密钥与运行时数据：绝不入库
+.env
+memory.json
+vectorstore.json
+sessions.json
+traces.jsonl
+
+# 评测产物：report.md / report.json 要提交（它们是证据），中间结果不提交
+eval/results/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
