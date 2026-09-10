@@ -38,8 +38,6 @@ export function cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-9);
 }
 
-// 纯函数，不带 owner 过滤——过滤放在 searchMemory 里做，
-// 这样排序逻辑本身可以不联网单测。
 export function rankMemories(entries, qvec, { k = DEFAULT_TOP_K, threshold = DEFAULT_THRESHOLD } = {}) {
   if (!Array.isArray(entries) || !qvec) return [];
   return entries
@@ -50,7 +48,6 @@ export function rankMemories(entries, qvec, { k = DEFAULT_TOP_K, threshold = DEF
     .slice(0, k);
 }
 
-// owner 为空的历史数据视为公共记忆
 function ownedBy(entry, owner) {
   if (!owner) return true;
   const o = entry.owner || PUBLIC_OWNER;

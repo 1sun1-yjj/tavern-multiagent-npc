@@ -1,6 +1,3 @@
-// 把原先写死在 agent.js 里的编排循环抽成「角色」。
-// 每个角色有自己的 system prompt、自己的长期画像、自己的向量记忆归属，
-// 以及自己的工具集——这是多 Agent 成立的实质条件，不是换个名字。
 import { chatStream } from "./llm.js";
 import { toolDefinitions, toolImplementations } from "./tools.js";
 import { loadProfile, saveProfile } from "./memory.js";
@@ -44,8 +41,6 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       saveProfile(profile, memoryNs);
     },
 
-    // 廉价判定：只回答"要不要开口"，不生成台词。
-    // 用小模型 + 极短 prompt，这是多 Agent 成本控制的关键一层。
     async react({ bus, trace, budget }) {
       if (!budget.spend("react")) return { speak: false, urgency: 0, angle: "" };
 
@@ -97,10 +92,6 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       }
     },
 
-    // 完整回合：跑一遍编排循环。
-    // history 是这个角色自己的会话历史，不含别人说的话——别人的内容通过
-    // 场景块进入 system prompt。上下文隔离是多 Agent 成立的前提。
-    // observed=true 用于次要角色：这句不是对他说的，他只是听见了。
     async *act({ bus, trace, budget, beat, playerText, history = [], observed = false }) {
       const profile = api.getProfile();
       const { intent, tool } = detectIntent(playerText);
@@ -132,7 +123,6 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
 
       const scene = bus.recentEvents(6).map(formatEvent).join("\n");
       const beatLine = beat ? `\n【本拍你要做的事】${beat.goal}` : "";
-      // 旁听者如果拿到的是玩家原话，会误以为在问自己，答出"这你得问老板娘"这种错位回答
       const userContent = observed
         ? `（旁边有人在说话，你听见了：「${playerText}」）\n` +
           (beat ? `你想接的话头：${beat.goal}` : "有想说的就接一句，没什么可说就简短应一声。")
@@ -336,8 +326,6 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
   return api;
 }
 
-// 一次玩家输入最多允许花掉多少次模型调用。超过就立刻停——
-// 没有这个上限，一次异常输入可能触发几十次调用。
 export function createBudget(limit = Number(process.env.MAX_SCENE_CALLS || 16)) {
   let calls = 0;
   let promptTokens = 0;

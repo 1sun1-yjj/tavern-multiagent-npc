@@ -1,6 +1,3 @@
-// 多 Agent 协作套件。
-// 验的是"多角色这件事有没有真的成立"：身份对不对、越不越权、
-// 事件归不归得到人、成本有没有被看门狗看住。
 import { runAgentStream, resolveSpeaker } from "../agent/agent.js";
 import { resetSceneState } from "../agent/scene.js";
 import { resetWorld } from "../agent/world.js";
@@ -60,7 +57,6 @@ export async function runMultiagentSuite(hasKey) {
   let secondarySpoke = 0;
 
   try {
-    // --- 路由（纯函数，不需要模型）---
     const r1 = resolveSpeaker("老周，你怎么看？", null);
     cases.push(mk("route_alias", "老周，你怎么看？", "regular", r1, r1 === "regular"));
     const r2 = resolveSpeaker("你好呀", null);
@@ -68,7 +64,6 @@ export async function runMultiagentSuite(hasKey) {
     const r3 = resolveSpeaker("老周", "boss");
     cases.push(mk("route_explicit", "显式 target 优先于文本", "boss", r3, r3 === "boss", "显式指定应压过称呼识别"));
 
-    // --- 身份边界 ---
     const boss = await once("你是谁？", { target: "boss" });
     totalCalls += boss.done?.budget?.calls || 0;
     beats += 1;
@@ -95,8 +90,6 @@ export async function runMultiagentSuite(hasKey) {
       )
     );
 
-    // --- 越权检查：客人不能去调酒 ---
-    // 注意按 actor 归属判断：同一拍里老板娘可能作为次要角色插话并调酒，那是合理的
     const orderToRegular = await once("给我来杯尼格罗尼", { target: "regular" });
     totalCalls += orderToRegular.done?.budget?.calls || 0;
     beats += 1;
@@ -117,7 +110,6 @@ export async function runMultiagentSuite(hasKey) {
       )
     );
 
-    // --- 老板娘被正常点单时工具仍然照常 ---
     const orderToBoss = await once("给我来一杯金汤力", { target: "boss" });
     totalCalls += orderToBoss.done?.budget?.calls || 0;
     beats += 1;
@@ -126,7 +118,6 @@ export async function runMultiagentSuite(hasKey) {
       mk("boss_tools_ok", "给我来一杯金汤力（对老板娘）", "调用 makeDrink", bossTools.join(",") || "无", bossTools.includes("makeDrink"))
     );
 
-    // --- 事件归属 ---
     const deltas = boss.events.filter((e) => e.type === "delta");
     const known = new Set(createRoster().map((c) => c.id));
     const allTagged = deltas.length > 0 && deltas.every((e) => e.actor && known.has(e.actor));
@@ -134,13 +125,11 @@ export async function runMultiagentSuite(hasKey) {
       mk("actor_attribution", "所有流式事件都归属到已知角色", "全部带合法 actor", `${deltas.length} 条 delta`, allTagged)
     );
 
-    // --- 跨角色感知：老板娘应该知道在场的人 ---
     const aware = await once("店里除了我还有别人吗？", { target: "boss" });
     totalCalls += aware.done?.budget?.calls || 0;
     beats += 1;
     cases.push(mk("cross_awareness", "店里除了我还有别人吗？", "提到在场的老周", aware.text, /老周|那边|角落|常客/.test(aware.text)));
 
-    // --- 看门狗 ---
     const budgets = [boss, reg, orderToRegular, orderToBoss, aware].map((x) => x.done?.budget).filter(Boolean);
     const overrun = budgets.filter((b) => b.calls > b.limit);
     cases.push(
@@ -153,7 +142,6 @@ export async function runMultiagentSuite(hasKey) {
       )
     );
 
-    // --- 次要角色能不能真的开口 ---
     const roomLines = [
       "今天店里好安静啊，就我一个人吗",
       "老周你天天来这儿不腻吗",
@@ -177,7 +165,6 @@ export async function runMultiagentSuite(hasKey) {
       );
     }
 
-    // --- react 契约 ---
     const roster = createRoster();
     const regular = roster.find((c) => c.id === "regular");
     const fakeBus = { recentEvents: () => [], all: () => [] };

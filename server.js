@@ -95,7 +95,6 @@ app.get("/api/eval", (_req, res) => {
   }
 });
 
-// 会话按角色分开存：每个角色只保留自己说过的话
 let sessions = loadSessions();
 
 function loadSessions() {

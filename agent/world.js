@@ -1,6 +1,3 @@
-// 所有角色共享的世界状态（黑板模式）。
-// mutate 必须是同步的：中间不能有 await，否则两个角色可能读到同一份过期库存，
-// 出现"两人各点走最后一瓶基酒"这种问题。
 const state = {
   stock: { coffee: 3, milk: 5, sugar: 8, cup: 10 },
   cash: 0,
@@ -11,7 +8,6 @@ const state = {
   customDrinks: [],
 };
 
-// 角色 id 和显示名分开：prompt 里写 "regular" 模型是看不懂的
 const nameRegistry = new Map();
 
 export function registerNames(entries) {

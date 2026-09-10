@@ -11,7 +11,6 @@ export const toolDefinitions = [
         properties: {
           drink: { type: "string", description: "酒名，如 尼格罗尼/蓝色夏威夷/椰林飘香/血腥玛丽/自由古巴/金汤力" },
           sugar: { type: "string", description: "甜度，如 标准/少糖/无糖" },
-          // 原来叫 milk，结果模型把"加冰"往里塞——名字有歧义就会出错
           extras: { type: "string", description: "客人的额外要求，如 加冰/去冰/加柠檬/双份。这里不写牛奶" },
         },
         required: ["drink"],
@@ -58,7 +57,6 @@ export const toolDefinitions = [
 ];
 
 export const toolImplementations = {
-  // milk 是旧字段名，留着兼容已有调用
   makeDrink({ drink, sugar = "标准", extras = "", milk = "" }) {
     const w = getWorld();
     const note = extras || milk || "标准";
@@ -90,5 +88,4 @@ export const toolImplementations = {
   },
 };
 
-// 常客这类角色不上吧台，只能旁观和搭话，不给调酒工具
 export const SPECTATOR_TOOL_NAMES = [];

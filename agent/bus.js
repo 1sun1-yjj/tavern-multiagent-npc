@@ -1,5 +1,3 @@
-// 角色之间的通信总线。消息是类型化的，不是自由文本——
-// 让 agent 互相自由聊天会导致成本失控且不可复现。
 export function createBus() {
   const log = [];
   const t0 = Date.now();
@@ -27,12 +25,10 @@ export function createBus() {
       return log.filter((m) => m.seq > seq);
     },
 
-    // 某角色能看到的消息：广播的，或点名给自己的
     addressedTo(actorId) {
       return log.filter((m) => m.to === "all" || m.to === actorId);
     },
 
-    // 只保留 say / act 这类"场面上发生的事"，喂给便宜判定用
     recentEvents(n = 3) {
       return log
         .filter((m) => m.type === "say" || m.type === "act" || m.type === "beat")

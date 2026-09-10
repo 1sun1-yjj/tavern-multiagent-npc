@@ -19,7 +19,6 @@ function buildBody({ messages, tools, toolChoice, stream }) {
   const body = { model: modelName(), messages };
   if (stream) {
     body.stream = true;
-    // 不开这个的话流末尾不会回传 usage，token 统计会一直是 0
     body.stream_options = { include_usage: true };
   }
   if (tools && tools.length) {
@@ -124,7 +123,6 @@ export async function* chatStream({ messages, tools, toolChoice }) {
         continue;
       }
 
-      // usage 单独占一个 choices 为空的块，得在判断 choice 之前取走，否则被下面的 continue 掉了
       if (data.usage) usage = data.usage;
 
       const choice = data.choices && data.choices[0];
@@ -159,7 +157,6 @@ export async function* chatStream({ messages, tools, toolChoice }) {
   }
 
   const tool_calls = toolMap.size ? [...toolMap.values()] : undefined;
-  // 结果得等流结束再发，usage 是最后一个块才到的
   yield {
     kind: "result",
     message: { role: "assistant", content, tool_calls },

@@ -1,6 +1,3 @@
-// 导演层。单 Agent 只会对玩家每句话做反应，没有"这一场戏往哪走"的概念，
-// 这一层补的就是那个：它决定本拍该推进什么，交给谁去做。
-// 不是每拍都跑——只在每 N 拍或触发条件下跑，否则成本翻倍。
 import { chatWithModel } from "./llm.js";
 import { formatEvent } from "./bus.js";
 import { addSpan, recordDirector, recordAuxLLM } from "./telemetry.js";
@@ -69,7 +66,6 @@ export async function planBeat({ bus, trace, budget, speakerId }) {
       return null;
     }
 
-    // 导演只能调度在场的人，不能凭空造人
     const assignee = present.includes(parsed.assignee) ? parsed.assignee : speakerId;
     const beat = {
       goal: String(parsed.goal || "").slice(0, 120),

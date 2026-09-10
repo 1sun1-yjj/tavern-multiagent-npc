@@ -1,6 +1,3 @@
-// 工具调完之后回头看一眼：刚才那下真的满足用户意图了吗。
-// 主循环里模型是往前看的，这里是往后看的，判据不一样，所以单独放一层。
-// 只在真发生过工具调用时才跑，一轮最多一次。
 import { chatWithModel } from "./llm.js";
 
 function enabled() {
@@ -53,7 +50,6 @@ export async function reflectOnTools({ userText, actions }) {
     const parsed = extractJson(res.content);
     const latencyMs = Date.now() - t0;
 
-    // 审核器自己出错时放行，不能因为它把主流程卡住
     if (!parsed || (parsed.verdict !== "pass" && parsed.verdict !== "revise")) {
       return { ran: true, verdict: "pass", issue: "", hint: "", latencyMs, usage: res.usage, degraded: true };
     }

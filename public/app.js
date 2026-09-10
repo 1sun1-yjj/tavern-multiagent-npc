@@ -330,7 +330,6 @@ function who(actor) {
   return SPEAKERS[actor] || (found && found.name) || actor;
 }
 
-// 同一拍里可能有多个角色说话，每人一个独立气泡
 function appendSpeaker(actor) {
   const root = document.createElement("div");
   root.className = "msg npc from-" + actor;
@@ -418,7 +417,6 @@ async function send(overrideText) {
 
   appendMessage("user", text);
 
-  // 一拍里可能有好几个人开口，按角色分开气泡和累计文本
   const slots = new Map();
   const texts = new Map();
   const slot = (actor) => {

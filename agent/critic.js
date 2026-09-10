@@ -1,5 +1,3 @@
-// 场景级评审。工具级的复核在 reflection.js 里，这里评的是"这一拍整体像不像话"：
-// 角色有没有出戏、导演的目标有没有被忽略。
 import { chatWithModel } from "./llm.js";
 import { formatEvent } from "./bus.js";
 import { displayName } from "./world.js";
@@ -38,8 +36,6 @@ export async function reviewBeat({ bus, trace, budget, beat, speakers }) {
         {
           role: "user",
           content:
-            // 这里必须用显示名。用 id 的话场记会把 "boss" 和 "老板娘" 当成两个人，
-            // 然后报告"指派给 boss 但开口的是老板娘"这种假警报。
             `导演本拍的目标：${beat.goal}（指派给 ${displayName(beat.assignee)}）\n` +
             `实际开口的角色：${speakers.map(displayName).join("、") || "（无人开口）"}\n\n` +
             `这一拍的内容：\n${transcript}`,

@@ -6,7 +6,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const TRACE_PATH = join(__dirname, "..", "traces.jsonl");
 const RING_SIZE = Number(process.env.TRACE_RING_SIZE || 60);
 
-// 元/百万 token。默认值只是占位，按服务商实际价格改 .env
 const PRICE_INPUT_PER_M = Number(process.env.PRICE_INPUT_PER_M || 2);
 const PRICE_OUTPUT_PER_M = Number(process.env.PRICE_OUTPUT_PER_M || 8);
 
@@ -182,8 +181,6 @@ export function recordLoop(trace) {
   trace.counters.loops += 1;
 }
 
-// 导演、场记、react 这些不属于主编排循环的调用，也要计进总量和角色账，
-// 否则成本会被系统性低估
 export function recordAuxLLM(trace, { actor, usage, latencyMs = 0 }) {
   trace.usage.promptTokens += usage?.prompt_tokens || 0;
   trace.usage.completionTokens += usage?.completion_tokens || 0;
@@ -295,7 +292,6 @@ function summarize(t) {
   };
 }
 
-// 内存里只有本进程的 trace，重启就没了，所以不够时回落到磁盘补齐
 export function listTraces(limit = 20) {
   const byId = new Map();
   for (const t of ring) {

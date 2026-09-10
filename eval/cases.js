@@ -1,5 +1,3 @@
-// 期望值按「应该有」的行为标，不按当前实现的实际输出标。
-// 否则评测永远 100%，等于没测。含边界和反例，故意的。
 
 export const INTENT_CASES = [
   { text: "给我来一杯尼格罗尼", expect: "makeDrink" },
@@ -25,6 +23,9 @@ export const INTENT_CASES = [
   { text: "来点特别的", expect: "inventDrink" },
   { text: "随便调一杯给我", expect: "inventDrink" },
   { text: "现场调一杯试试", expect: "inventDrink" },
+  { text: "随便给我调一杯特别的", expect: "inventDrink", note: "「随便」和「调」之间插了「给我」" },
+  { text: "你看着办吧", expect: "inventDrink" },
+  { text: "来杯特别一点的", expect: "inventDrink" },
 
   { text: "你们有什么酒", expect: "checkStock" },
   { text: "库存还有多少", expect: "checkStock" },
@@ -112,7 +113,6 @@ export const OUTPUT_ALLOW_CASES = [
   { text: "你这话题转得也太快了，先把杯子满上再说吧。" },
 ];
 
-// 用合成向量测排序：相似度降序、阈值过滤、top-k 截断、维度失配防护
 export const RETRIEVAL_CASES = [
   {
     id: "ranking_order",
@@ -169,7 +169,6 @@ export const RETRIEVAL_CASES = [
   },
 ];
 
-// 断言「记忆到底有没有真的进 prompt」——这条链路断了很难被发现
 export const PROMPT_CASES = [
   {
     id: "name_injected",

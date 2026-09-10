@@ -1,8 +1,3 @@
-// 场景调度。一拍 = 一次玩家输入牵动的整场反应。
-// 三条硬约束：
-//   1. 每拍只有一个主角，其他人要过 cheap react 才有发言权（否则 N² 互相应答）
-//   2. 所有调用都从 budget 里扣，超上限立刻停（看门狗）
-//   3. 角色只能看到自己说过的话，别人的内容通过场景块进入 system prompt
 import { createBus } from "./bus.js";
 import { createRoster, DEFAULT_SPEAKER } from "./characters.js";
 import { createBudget } from "./character.js";
@@ -20,7 +15,6 @@ import {
   recordBudgetExhausted,
 } from "./telemetry.js";
 
-// 运行时读取，方便评测按套件调阈值
 const reactThreshold = () => Number(process.env.REACT_THRESHOLD ?? 0.25);
 const maxSecondary = () => Number(process.env.MAX_SECONDARY_SPEAKERS ?? 1);
 const secondaryCooldown = () => Number(process.env.SECONDARY_COOLDOWN ?? 2);
@@ -158,7 +152,6 @@ export async function* runScene({ userText, sessionId = "default", target = null
       .filter((r) => r.speak && r.urgency >= reactThreshold())
       .sort((a, b) => b.urgency - a.urgency);
 
-    // 导演点名的人插到队首，不管 react 判没判过
     if (beat && beat.assignee !== speakerId) {
       const assigned = reactions.find((r) => r.character.id === beat.assignee);
       if (assigned && !candidates.includes(assigned)) candidates = [assigned, ...candidates];
@@ -232,7 +225,6 @@ export async function* runScene({ userText, sessionId = "default", target = null
   }
 }
 
-// 输出守卫必须能替换已经流出去的文本，所以在这里统一处理并把替换结果带出去
 function guardAndReport({ trace, actor, reply }) {
   const tOut = timer();
   const out = guardOutput(reply);

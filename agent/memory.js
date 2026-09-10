@@ -5,8 +5,6 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_NS = "default";
 
-// 每个角色一份独立的画像文件，互不污染。
-// 默认命名空间仍然落在 memory.json，保持对旧数据的兼容。
 function profilePath(ns) {
   return ns === DEFAULT_NS
     ? join(__dirname, "..", "memory.json")

@@ -20,7 +20,6 @@ const opt = (n, d) => {
   return hit ? hit.slice(n.length + 3) : d;
 };
 
-// 环境变量是调用时才读的，所以这里能覆盖，不受 import 提升影响
 if (has("no-reflection")) process.env.REFLECTION_ENABLED = "0";
 if (has("no-safety")) process.env.SAFETY_ENABLED = "0";
 
