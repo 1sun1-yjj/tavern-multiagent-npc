@@ -25,24 +25,42 @@ export function estimateCostCNY(promptTokens = 0, completionTokens = 0) {
   );
 }
 
-export function startTrace({ sessionId, userText }) {
+function actorStats(trace, actor) {
+  const key = actor || "unknown";
+  if (!trace.actors[key]) {
+    trace.actors[key] = { spans: 0, llmCalls: 0, toolCalls: 0, llmMs: 0, promptTokens: 0, completionTokens: 0 };
+  }
+  return trace.actors[key];
+}
+
+export function startTrace({ sessionId, userText, sceneId = null }) {
   return {
     id: newTraceId(),
     sessionId: sessionId || "default",
+    sceneId,
     startedAt: new Date().toISOString(),
     userText,
     spans: [],
+    beats: [],
+    actors: {},
     safety: {
       input: { action: "allow", reason: null },
       output: { action: "allow", reason: null },
     },
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     counters: {
+      llmCalls: 0,
       loops: 0,
       toolCalls: 0,
       reflections: 0,
       reflectionRetries: 0,
       safetyBlocks: 0,
+      reactCalls: 0,
+      reactsSpoke: 0,
+      beats: 0,
+      directorCalls: 0,
+      criticCalls: 0,
+      budgetExhausted: 0,
     },
     timing: { llmMs: 0, toolMs: 0, memoryMs: 0, safetyMs: 0, reflectionMs: 0, ttftMs: null },
     reply: "",
@@ -55,6 +73,7 @@ export function startTrace({ sessionId, userText }) {
 export function addSpan(trace, span) {
   const entry = {
     kind: span.kind,
+    actor: span.actor || null,
     name: span.name,
     atMs: Date.now() - trace._t0,
     durMs: Math.max(0, Math.round(span.durMs || 0)),
@@ -62,6 +81,10 @@ export function addSpan(trace, span) {
     detail: span.detail === undefined ? null : span.detail,
   };
   trace.spans.push(entry);
+  const st = actorStats(trace, span.actor);
+  st.spans += 1;
+  if (span.kind === "llm") st.llmCalls += 1;
+  if (span.kind === "tool") st.toolCalls += 1;
   return entry;
 }
 
@@ -70,15 +93,22 @@ export function timer() {
   return { ms: () => Date.now() - t0 };
 }
 
-export function recordLLM(trace, { step, model, toolChoice, usage, latencyMs, ttftMs, contentChars, toolCalls, finishReason }) {
+export function recordLLM(trace, { actor, step, model, toolChoice, usage, latencyMs, ttftMs, contentChars, toolCalls, finishReason }) {
   trace.usage.promptTokens += usage?.prompt_tokens || 0;
   trace.usage.completionTokens += usage?.completion_tokens || 0;
   trace.usage.totalTokens += usage?.total_tokens || 0;
   trace.timing.llmMs += Math.round(latencyMs || 0);
+  trace.counters.llmCalls += 1;
   if (ttftMs != null && trace.timing.ttftMs == null) trace.timing.ttftMs = Math.round(ttftMs);
+
+  const st = actorStats(trace, actor);
+  st.llmMs += Math.round(latencyMs || 0);
+  st.promptTokens += usage?.prompt_tokens || 0;
+  st.completionTokens += usage?.completion_tokens || 0;
 
   return addSpan(trace, {
     kind: "llm",
+    actor,
     name: `step${step}`,
     durMs: latencyMs,
     ok: true,
@@ -95,11 +125,12 @@ export function recordLLM(trace, { step, model, toolChoice, usage, latencyMs, tt
   });
 }
 
-export function recordTool(trace, { name, args, result, latencyMs, ok = true }) {
+export function recordTool(trace, { actor, name, args, result, latencyMs, ok = true }) {
   trace.counters.toolCalls += 1;
   trace.timing.toolMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "tool",
+    actor,
     name,
     durMs: latencyMs,
     ok,
@@ -107,10 +138,11 @@ export function recordTool(trace, { name, args, result, latencyMs, ok = true }) 
   });
 }
 
-export function recordMemory(trace, { op, count = 0, latencyMs = 0, detail = null, ok = true }) {
+export function recordMemory(trace, { actor, op, count = 0, latencyMs = 0, detail = null, ok = true }) {
   trace.timing.memoryMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "memory",
+    actor,
     name: op,
     durMs: latencyMs,
     ok,
@@ -118,12 +150,13 @@ export function recordMemory(trace, { op, count = 0, latencyMs = 0, detail = nul
   });
 }
 
-export function recordSafety(trace, { stage, action, reason = null, latencyMs = 0, reply = null }) {
+export function recordSafety(trace, { actor, stage, action, reason = null, latencyMs = 0, reply = null }) {
   if (action !== "allow") trace.counters.safetyBlocks += 1;
   trace.safety[stage] = { action, reason };
   trace.timing.safetyMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "safety",
+    actor,
     name: `${stage}_guard`,
     durMs: latencyMs,
     ok: action !== "block",
@@ -131,12 +164,13 @@ export function recordSafety(trace, { stage, action, reason = null, latencyMs = 
   });
 }
 
-export function recordReflection(trace, { verdict, issue = null, latencyMs = 0, retried = false }) {
+export function recordReflection(trace, { actor, verdict, issue = null, latencyMs = 0, retried = false }) {
   trace.counters.reflections += 1;
   if (retried) trace.counters.reflectionRetries += 1;
   trace.timing.reflectionMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "reflection",
+    actor,
     name: "critique",
     durMs: latencyMs,
     ok: verdict === "pass",
@@ -146,6 +180,43 @@ export function recordReflection(trace, { verdict, issue = null, latencyMs = 0, 
 
 export function recordLoop(trace) {
   trace.counters.loops += 1;
+}
+
+// 导演、场记、react 这些不属于主编排循环的调用，也要计进总量和角色账，
+// 否则成本会被系统性低估
+export function recordAuxLLM(trace, { actor, usage, latencyMs = 0 }) {
+  trace.usage.promptTokens += usage?.prompt_tokens || 0;
+  trace.usage.completionTokens += usage?.completion_tokens || 0;
+  trace.usage.totalTokens += usage?.total_tokens || 0;
+  trace.counters.llmCalls += 1;
+  const st = actorStats(trace, actor);
+  st.llmCalls += 1;
+  st.llmMs += Math.round(latencyMs || 0);
+  st.promptTokens += usage?.prompt_tokens || 0;
+  st.completionTokens += usage?.completion_tokens || 0;
+}
+
+export function recordReact(trace, { actor }) {
+  trace.counters.reactCalls += 1;
+  return actor;
+}
+
+export function recordBeat(trace, beat) {
+  trace.counters.beats += 1;
+  trace.beats.push(beat);
+  return beat;
+}
+
+export function recordDirector(trace) {
+  trace.counters.directorCalls += 1;
+}
+
+export function recordCritic(trace) {
+  trace.counters.criticCalls += 1;
+}
+
+export function recordBudgetExhausted(trace) {
+  trace.counters.budgetExhausted += 1;
 }
 
 export function endTrace(trace, { reply = "", ok = true, error = null } = {}) {
@@ -167,6 +238,7 @@ export function endTrace(trace, { reply = "", ok = true, error = null } = {}) {
     costCNY: Number(
       estimateCostCNY(trace.usage.promptTokens, trace.usage.completionTokens).toFixed(6)
     ),
+    actors: Object.keys(trace.actors).length,
     ...trace.counters,
   };
 
@@ -180,9 +252,8 @@ export function endTrace(trace, { reply = "", ok = true, error = null } = {}) {
 
   if (process.env.TRACE_VERBOSE === "1") {
     console.log(
-      `[trace] ${trace.id} ${trace.totals.totalMs}ms ` +
-        `ttft=${trace.totals.ttftMs ?? "-"}ms tok=${trace.totals.totalTokens} ` +
-        `tools=${trace.totals.toolCalls} ¥${trace.totals.costCNY}`
+      `[trace] ${trace.id} ${trace.totals.totalMs}ms tok=${trace.totals.totalTokens} ` +
+        `calls=${trace.totals.llmCalls} actors=${trace.totals.actors} ¥${trace.totals.costCNY}`
     );
   }
   return trace;
@@ -204,12 +275,16 @@ function persist(trace) {
 function summarize(t) {
   return {
     id: t.id,
+    sceneId: t.sceneId || null,
     startedAt: t.startedAt,
     userText: String(t.userText || "").slice(0, 60),
     totalMs: t.totals?.totalMs ?? null,
     ttftMs: t.totals?.ttftMs ?? null,
     totalTokens: t.totals?.totalTokens ?? null,
     costCNY: t.totals?.costCNY ?? null,
+    llmCalls: t.totals?.llmCalls ?? 0,
+    actors: t.totals?.actors ?? 0,
+    beats: t.totals?.beats ?? 0,
     toolCalls: t.totals?.toolCalls ?? 0,
     loops: t.totals?.loops ?? 0,
     reflections: t.totals?.reflections ?? 0,
@@ -248,6 +323,7 @@ export function metrics({ fromDisk = false } = {}) {
   if (!source.length) return { count: 0, note: "暂无 trace 数据" };
 
   const toolHist = {};
+  const actorAgg = {};
   let prompt = 0;
   let completion = 0;
   let cost = 0;
@@ -256,6 +332,9 @@ export function metrics({ fromDisk = false } = {}) {
   let ttftCount = 0;
   let toolCalls = 0;
   let loops = 0;
+  let llmCalls = 0;
+  let reactCalls = 0;
+  let beats = 0;
   let reflections = 0;
   let retries = 0;
   let safetyBlocks = 0;
@@ -273,10 +352,22 @@ export function metrics({ fromDisk = false } = {}) {
     }
     toolCalls += x.toolCalls || 0;
     loops += x.loops || 0;
+    llmCalls += x.llmCalls || 0;
+    reactCalls += x.reactCalls || 0;
+    beats += x.beats || 0;
     reflections += x.reflections || 0;
     retries += x.reflectionRetries || 0;
     safetyBlocks += x.safetyBlocks || 0;
     if (t.ok === false) failed += 1;
+
+    for (const [actor, st] of Object.entries(t.actors || {})) {
+      if (!actorAgg[actor]) actorAgg[actor] = { llmCalls: 0, toolCalls: 0, llmMs: 0, tokens: 0 };
+      actorAgg[actor].llmCalls += st.llmCalls || 0;
+      actorAgg[actor].toolCalls += st.toolCalls || 0;
+      actorAgg[actor].llmMs += st.llmMs || 0;
+      actorAgg[actor].tokens += (st.promptTokens || 0) + (st.completionTokens || 0);
+    }
+
     for (const s of t.spans || []) {
       if (s.kind === "tool") toolHist[s.name] = (toolHist[s.name] || 0) + 1;
     }
@@ -299,11 +390,15 @@ export function metrics({ fromDisk = false } = {}) {
     },
     cost: { totalCNY: Number(cost.toFixed(4)), avgCNY: Number((cost / n).toFixed(6)) },
     agent: {
+      avgLlmCalls: Number((llmCalls / n).toFixed(2)),
       avgLoops: Number((loops / n).toFixed(2)),
       avgToolCalls: Number((toolCalls / n).toFixed(2)),
+      avgBeats: Number((beats / n).toFixed(2)),
+      reactCalls,
       reflections,
       reflectionRetries: retries,
       toolHistogram: toolHist,
+      byActor: actorAgg,
     },
     safety: { blocks: safetyBlocks, blockRate: Number((safetyBlocks / n).toFixed(4)) },
     reliability: { failed, failRate: Number((failed / n).toFixed(4)) },

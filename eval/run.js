@@ -8,6 +8,7 @@ import { detectIntent } from "../agent/intent.js";
 import { guardInput, guardOutput } from "../agent/safety.js";
 import { rankMemories } from "../agent/vectorstore.js";
 import { buildSystemPrompt, runAgentStream } from "../agent/agent.js";
+import { runMultiagentSuite } from "./multiagent.js";
 import * as CASES from "./cases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +31,7 @@ const SUITE_DEFS = {
   prompt: { label: "Prompt 记忆注入", mode: "offline" },
   persona: { label: "人设一致性", mode: "online" },
   e2e: { label: "工具调用端到端", mode: "online" },
+  multiagent: { label: "多 Agent 协作", mode: "online" },
 };
 const OFFLINE = Object.keys(SUITE_DEFS).filter((k) => SUITE_DEFS[k].mode === "offline");
 const ONLINE = Object.keys(SUITE_DEFS).filter((k) => SUITE_DEFS[k].mode === "online");
@@ -452,6 +454,7 @@ async function main() {
     prompt: suitePrompt,
     persona: suitePersona,
     e2e: suiteE2E,
+    multiagent: () => runMultiagentSuite(hasKey()),
   };
 
   const results = [];

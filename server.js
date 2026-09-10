@@ -3,10 +3,12 @@ import "dotenv/config";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { runAgentStream } from "./agent/agent.js";
+import { runAgentStream, getRoster } from "./agent/agent.js";
 import { loadProfile } from "./agent/memory.js";
 import { listMemory } from "./agent/vectorstore.js";
 import { listTraces, getTrace, metrics } from "./agent/telemetry.js";
+import { snapshot as worldSnapshot, resetWorld, enter, leave, presentActors } from "./agent/world.js";
+import { sceneInfo } from "./agent/scene.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -34,7 +36,28 @@ app.get("/api/health", (_req, res) => {
     vectorMemory: hasVectorKey(),
     reflection: process.env.REFLECTION_ENABLED !== "0",
     safety: process.env.SAFETY_ENABLED !== "0",
+    cast: getRoster(),
   });
+});
+
+app.get("/api/cast", (_req, res) => {
+  res.json({ cast: getRoster(), present: presentActors(), world: worldSnapshot() });
+});
+
+app.get("/api/scene", (_req, res) => {
+  res.json(sceneInfo());
+});
+
+app.post("/api/world/reset", (_req, res) => {
+  resetWorld();
+  res.json({ ok: true, world: worldSnapshot() });
+});
+
+app.post("/api/world/present", (req, res) => {
+  const { id, present } = req.body || {};
+  if (!id) return res.status(400).json({ error: "id 不能为空" });
+  const next = present === false ? leave(id) : enter(id);
+  res.json({ ok: true, present: next });
 });
 
 app.get("/api/menu", (_req, res) => {
@@ -42,8 +65,8 @@ app.get("/api/menu", (_req, res) => {
   res.json({ custom: profile.customDrinks || [] });
 });
 
-app.get("/api/memories", (_req, res) => {
-  res.json({ memories: listMemory() });
+app.get("/api/memories", (req, res) => {
+  res.json({ memories: listMemory(req.query.owner || null) });
 });
 
 app.get("/api/traces", (req, res) => {
@@ -72,12 +95,18 @@ app.get("/api/eval", (_req, res) => {
   }
 });
 
+// 会话按角色分开存：每个角色只保留自己说过的话
 let sessions = loadSessions();
 
 function loadSessions() {
   try {
     if (existsSync(SESSIONS_PATH)) {
-      return new Map(Object.entries(JSON.parse(readFileSync(SESSIONS_PATH, "utf8"))));
+      const raw = JSON.parse(readFileSync(SESSIONS_PATH, "utf8"));
+      const out = new Map();
+      for (const [k, v] of Object.entries(raw)) {
+        out.set(k, Array.isArray(v) ? { boss: v } : v);
+      }
+      return out;
     }
   } catch {}
   return new Map();
@@ -92,17 +121,17 @@ function saveSessions() {
 }
 
 function ensureSession(id) {
-  if (!sessions.has(id)) sessions.set(id, []);
+  if (!sessions.has(id)) sessions.set(id, {});
   return sessions.get(id);
 }
 
 app.post("/api/chat", async (req, res) => {
-  const { text, sessionId = "default" } = req.body || {};
+  const { text, sessionId = "default", target = null } = req.body || {};
   if (!text || !text.trim()) {
     return res.status(400).json({ error: "text 不能为空" });
   }
 
-  const history = ensureSession(sessionId);
+  const histories = ensureSession(sessionId);
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -112,13 +141,13 @@ app.post("/api/chat", async (req, res) => {
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
   try {
-    for await (const ev of runAgentStream({ userText: text, messages: history, sessionId })) {
+    for await (const ev of runAgentStream({ userText: text, sessionId, target, histories })) {
       if (res.writableEnded) break;
       send(ev);
     }
   } catch (e) {
     console.error("[server] /api/chat 出错：", e.message);
-    send({ type: "delta", text: "（店长这边好像出了点小状况…看看浏览器 console 或服务端日志？）" });
+    send({ type: "delta", actor: "boss", text: "（店长这边好像出了点小状况…看看浏览器 console 或服务端日志？）" });
     send({ type: "error", error: e.message });
   } finally {
     saveSessions();
@@ -129,9 +158,10 @@ app.post("/api/chat", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   const on = (v) => (v ? "开" : "关");
+  const cast = getRoster().map((c) => c.name).join("、");
   console.log(`🍸 星布谷地 · 岁月酒吧已启动：http://localhost:${PORT}`);
   console.log(`   模型：${process.env.DEEPSEEK_MODEL || "deepseek-chat"}`);
-  console.log(`   Key 已配置：${hasDeepSeekKey()}`);
+  console.log(`   角色：${cast}`);
   console.log(
     `   向量记忆：${on(hasVectorKey())} ｜ 反思复核：${on(process.env.REFLECTION_ENABLED !== "0")}` +
       ` ｜ 安全守卫：${on(process.env.SAFETY_ENABLED !== "0")}`

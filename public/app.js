@@ -318,6 +318,58 @@ function appendBadge(text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+const SPEAKERS = { boss: "老板娘", regular: "老周" };
+let castList = [];
+let lastWorld = null;
+let lastBudget = null;
+const worldEl = document.getElementById("world");
+
+function who(actor) {
+  if (!actor) return "店长";
+  const found = castList.find((c) => c.id === actor);
+  return SPEAKERS[actor] || (found && found.name) || actor;
+}
+
+// 同一拍里可能有多个角色说话，每人一个独立气泡
+function appendSpeaker(actor) {
+  const root = document.createElement("div");
+  root.className = "msg npc from-" + actor;
+  const nameEl = document.createElement("div");
+  nameEl.className = "speaker";
+  nameEl.textContent = who(actor);
+  const body = document.createElement("div");
+  body.innerHTML = '<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
+  root.appendChild(nameEl);
+  root.appendChild(body);
+  messagesEl.appendChild(root);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  let cleared = false;
+  return {
+    root,
+    body,
+    clear() {
+      if (cleared) return;
+      cleared = true;
+      body.innerHTML = "";
+    },
+    set(t) {
+      cleared = true;
+      body.textContent = t;
+    },
+  };
+}
+
+function renderWorld() {
+  const w = lastWorld || {};
+  const parts = [];
+  if (w.clock) parts.push(`🕐 <b>${w.clock.phase}</b> · 第 ${w.clock.turn} 拍`);
+  if (w.cash != null) parts.push(`💰 <b>${w.cash}</b> 元`);
+  if (w.stock) parts.push(`🍾 ${Object.entries(w.stock).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+  if (w.present) parts.push(`👥 ${w.present.map(who).join("、")}`);
+  if (lastBudget) parts.push(`⚙ 本轮 <b>${lastBudget.calls}</b>/${lastBudget.limit} 次调用`);
+  worldEl.innerHTML = parts.map((p) => `<span>${p}</span>`).join("");
+}
+
 async function readSSE(res, onEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -340,16 +392,19 @@ async function readSSE(res, onEvent) {
 }
 
 function handleAction(a) {
+  const n = who(a.actor);
   if (a.name === "makeDrink") {
-    appendBadge(`🍸 店长调了「${a.args.drink}」`);
+    appendBadge(`🍸 ${n}调了「${a.args.drink}」`);
   } else if (a.name === "inventDrink") {
-    appendBadge(`🎨 店长原创了一杯「${a.args.name}」`);
+    appendBadge(`🎨 ${n}原创了一杯「${a.args.name}」`);
   } else if (a.name === "takePayment") {
-    appendBadge(`💰 店长收了 ${a.args.amount} 元`);
+    appendBadge(`💰 ${n}收了 ${a.args.amount} 元`);
   } else {
-    appendBadge(`🛠 店长查了查库存`);
+    appendBadge(`🛠 ${n}查了查库存`);
   }
 }
+
+const targetSel = document.getElementById("target");
 
 async function send(overrideText) {
   const text = (overrideText !== undefined ? overrideText : input.value).trim();
@@ -362,35 +417,55 @@ async function send(overrideText) {
   }
 
   appendMessage("user", text);
-  const npcEl = appendMessage("npc", "", true);
+
+  // 一拍里可能有好几个人开口，按角色分开气泡和累计文本
+  const slots = new Map();
+  const texts = new Map();
+  const slot = (actor) => {
+    if (!slots.has(actor)) {
+      slots.set(actor, appendSpeaker(actor));
+      texts.set(actor, "");
+    }
+    return slots.get(actor);
+  };
+  let lastActor = "boss";
   npc.thinking = true;
 
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, sessionId }),
+      body: JSON.stringify({ text, sessionId, target: targetSel.value || null }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "店长请求失败了");
+      throw new Error(err.error || "请求失败了");
     }
 
-    let reply = "";
-    let started = false;
     await readSSE(res, (ev) => {
-      if (!started) {
-        npcEl.classList.remove("dots");
-        npcEl.innerHTML = "";
-        started = true;
-      }
       if (ev.type === "delta") {
-        reply += ev.text;
-        npcEl.textContent = reply;
+        const actor = ev.actor || "boss";
+        lastActor = actor;
+        const s = slot(actor);
+        s.clear();
+        const cur = (texts.get(actor) || "") + ev.text;
+        texts.set(actor, cur);
+        s.body.textContent = cur;
         messagesEl.scrollTop = messagesEl.scrollHeight;
         npc.talkingUntil = performance.now() / 1000 + 0.6;
       } else if (ev.type === "action") {
         handleAction(ev);
+      } else if (ev.type === "beat") {
+        appendBadge(`🎬 导演安排：${who(ev.assignee)}该${ev.goal}`);
+      } else if (ev.type === "critic") {
+        appendBadge(`🧐 场记记了一笔：${ev.issue}`);
+      } else if (ev.type === "budget_exhausted") {
+        appendBadge(`⏹ 这一轮已经花掉 ${ev.used} 次模型调用，先停一下`);
+      } else if (ev.type === "guard_replaced") {
+        const actor = ev.actor || "boss";
+        slot(actor).set(ev.reply);
+        texts.set(actor, ev.reply);
+        appendBadge("🛡 有一句话说得不对味，已经换掉");
       } else if (ev.type === "done") {
         npc.thinking = false;
         if (ev.game) {
@@ -399,14 +474,15 @@ async function send(overrideText) {
             appendBadge(`❤ 好感度提升了！现在是「${ev.game.levelName}」啦`);
           }
         }
+        if (ev.world) lastWorld = ev.world;
+        if (ev.budget) lastBudget = ev.budget;
+        renderWorld();
       } else if (ev.type === "error") {
-        npcEl.textContent = "（店长这边出了点小状况…）" + (ev.error ? `\n${ev.error}` : "");
+        slot(lastActor).set("（这边出了点小状况…）" + (ev.error ? `\n${ev.error}` : ""));
       }
     });
   } catch (e) {
-    npcEl.classList.remove("dots");
-    npcEl.innerHTML = "";
-    npcEl.textContent = e.message || "店长好像没反应…看看服务端日志？";
+    slot(lastActor).set(e.message || "没反应…看看服务端日志？");
     npc.thinking = false;
   }
 }
@@ -575,15 +651,32 @@ menuBtn.addEventListener("click", openPrivateMenu);
 privateMenuClose.addEventListener("click", () => privateMenu.classList.add("hidden"));
 privateMenu.addEventListener("click", (e) => { if (e.target === privateMenu) privateMenu.classList.add("hidden"); });
 
+async function loadCast() {
+  try {
+    const res = await fetch("/api/cast");
+    const data = await res.json();
+    castList = data.cast || [];
+    targetSel.innerHTML = '<option value="">自动识别</option>' +
+      castList.map((c) => `<option value="${escapeHtml(c.id)}">跟${escapeHtml(c.name)}说</option>`).join("");
+    if (data.world) {
+      lastWorld = data.world;
+      renderWorld();
+    }
+  } catch {
+    targetSel.innerHTML = '<option value="">自动识别</option>';
+  }
+}
+
 async function checkHealth() {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
     if (data.hasKey) {
-      statusEl.textContent = `店长上线了（${data.model}）。A/D 或 ←/→ 移动，W/S 或 ↑/↓ 前后；走到吧台椅旁按 E 坐下，才能点单聊天~`;
+      const names = (data.cast || []).map((c) => c.name).join("、");
+      statusEl.textContent = `在场：${names}（${data.model}）。A/D 或 ←/→ 移动，W/S 或 ↑/↓ 前后；走到吧台椅旁按 E 坐下才能聊天。也可以直接点名，比如“老周，你怎么看？”`;
       statusEl.className = "status ok";
     } else {
-      statusEl.textContent = "店长大脑还没接好：请复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY 后重启服务。";
+      statusEl.textContent = "大脑还没接好：请复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY 后重启服务。";
       statusEl.className = "status warn";
     }
   } catch (e) {
@@ -592,4 +685,5 @@ async function checkHealth() {
   }
 }
 setChatEnabled(false);
+loadCast();
 checkHealth();

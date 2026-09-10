@@ -3,7 +3,15 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROFILE_PATH = join(__dirname, "..", "memory.json");
+const DEFAULT_NS = "default";
+
+// 每个角色一份独立的画像文件，互不污染。
+// 默认命名空间仍然落在 memory.json，保持对旧数据的兼容。
+function profilePath(ns) {
+  return ns === DEFAULT_NS
+    ? join(__dirname, "..", "memory.json")
+    : join(__dirname, "..", `memory.${ns}.json`);
+}
 
 function defaultProfile() {
   return {
@@ -14,24 +22,28 @@ function defaultProfile() {
     affinity: 0,
     mood: 0,
     customDrinks: [],
+    knownFaces: [],
   };
 }
 
-export function loadProfile() {
+export function loadProfile(ns = DEFAULT_NS) {
   try {
-    if (existsSync(PROFILE_PATH)) {
-      const raw = JSON.parse(readFileSync(PROFILE_PATH, "utf8"));
+    const p = profilePath(ns);
+    if (existsSync(p)) {
+      const raw = JSON.parse(readFileSync(p, "utf8"));
       return { ...defaultProfile(), ...raw };
     }
   } catch {}
   return defaultProfile();
 }
 
-export function saveProfile(profile) {
+export function saveProfile(profile, ns = DEFAULT_NS) {
   try {
     mkdirSync(__dirname, { recursive: true });
-    writeFileSync(PROFILE_PATH, JSON.stringify(profile, null, 2), "utf8");
+    writeFileSync(profilePath(ns), JSON.stringify(profile, null, 2), "utf8");
   } catch (e) {
     console.warn("[memory] 保存长期记忆失败：", e.message);
   }
 }
+
+export const DEFAULT_NAMESPACE = DEFAULT_NS;

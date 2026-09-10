@@ -46,11 +46,29 @@ line("总成本（估算）", `¥${m.cost.totalCNY}`);
 line("平均每轮成本", `¥${m.cost.avgCNY}`);
 console.log("");
 console.log("  【Agent 行为】");
+line("平均每次输入模型调用数", m.agent.avgLlmCalls);
 line("平均编排轮数", m.agent.avgLoops);
+line("平均每拍发言人数", m.agent.avgBeats);
 line("平均工具调用数", m.agent.avgToolCalls);
 line("工具调用分布", Object.entries(m.agent.toolHistogram).map(([k, v]) => `${k}×${v}`).join("  ") || "—");
 line("反思触发次数", m.agent.reflections);
 line("反思导致重试", m.agent.reflectionRetries);
+console.log("");
+console.log("  【按角色拆分】");
+const byActor = Object.entries(m.agent.byActor || {}).filter(
+  ([, st]) => st.llmCalls > 0 || st.toolCalls > 0
+);
+if (!byActor.length) {
+  line("—", "无数据");
+} else {
+  byActor.sort((a, b) => b[1].llmCalls - a[1].llmCalls);
+  for (const [actor, st] of byActor) {
+    line(
+      actor,
+      `调用 ${st.llmCalls} 次 ｜ 工具 ${st.toolCalls} 次 ｜ LLM 耗时 ${st.llmMs}ms ｜ tokens ${st.tokens}`
+    );
+  }
+}
 console.log("");
 console.log("  【安全与可靠性】");
 line("安全拦截次数", `${m.safety.blocks}（${(m.safety.blockRate * 100).toFixed(2)}%）`);

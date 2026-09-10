@@ -46,9 +46,10 @@ async function post(body, apiKey) {
   });
 }
 
-export async function chatWithModel({ messages, tools, toolChoice }) {
+export async function chatWithModel({ messages, tools, toolChoice, model }) {
   const apiKey = getApiKey();
   const body = buildBody({ messages, tools, toolChoice, stream: false });
+  if (model) body.model = model;
 
   let lastErr = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {

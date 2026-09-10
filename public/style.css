@@ -285,3 +285,46 @@ body {
 .private-item .nm { color: #f6d9a8; font-weight: 700; font-size: 14px; }
 .private-item .meta { color: #b7a284; font-size: 12px; margin-top: 2px; }
 .private-empty { text-align: center; color: #b7a284; font-size: 13px; padding: 18px 0; }
+
+/* ---- 多角色对话 ---- */
+
+.msg.npc .speaker {
+  font-size: 11px;
+  color: #8a6f4c;
+  margin-bottom: 3px;
+  font-weight: 700;
+}
+
+.msg.npc.from-regular {
+  background: #e6eef0;
+  color: #24333a;
+}
+
+.msg.npc.from-regular .speaker { color: #55707c; }
+
+.msg.npc.from-director,
+.msg.npc.from-critic {
+  background: rgba(0, 0, 0, 0.3);
+  color: #d8c6a8;
+}
+
+.input-row select {
+  padding: 10px 8px;
+  border-radius: 8px;
+  border: 2px solid #6b4a2e;
+  background: #241b10;
+  color: #f4e9d8;
+  font-size: 13px;
+  cursor: pointer;
+}
+.input-row select:focus { outline: none; border-color: #cf9c5b; }
+
+.world {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: #b7a284;
+  padding-top: 2px;
+}
+.world b { color: #f6d9a8; font-weight: 700; }

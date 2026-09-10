@@ -8,6 +8,7 @@ const STORE_PATH = join(__dirname, "..", "vectorstore.json");
 const MAX_MEMORIES = 200;
 const DEFAULT_TOP_K = 4;
 const DEFAULT_THRESHOLD = 0.25;
+const PUBLIC_OWNER = "public";
 
 let memories = load();
 
@@ -37,7 +38,8 @@ export function cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-9);
 }
 
-// 抽出来是为了能不联网单测排序逻辑
+// 纯函数，不带 owner 过滤——过滤放在 searchMemory 里做，
+// 这样排序逻辑本身可以不联网单测。
 export function rankMemories(entries, qvec, { k = DEFAULT_TOP_K, threshold = DEFAULT_THRESHOLD } = {}) {
   if (!Array.isArray(entries) || !qvec) return [];
   return entries
@@ -48,13 +50,20 @@ export function rankMemories(entries, qvec, { k = DEFAULT_TOP_K, threshold = DEF
     .slice(0, k);
 }
 
-export async function addMemory(text, meta = {}) {
+// owner 为空的历史数据视为公共记忆
+function ownedBy(entry, owner) {
+  if (!owner) return true;
+  const o = entry.owner || PUBLIC_OWNER;
+  return o === owner || o === PUBLIC_OWNER;
+}
+
+export async function addMemory(text, meta = {}, owner = PUBLIC_OWNER) {
   try {
     const [vec] = await embedTexts([text]);
     if (!vec) return;
     memories.push({
       id: Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7),
-      text, meta, vec,
+      text, meta, owner, vec,
     });
     if (memories.length > MAX_MEMORIES) memories.splice(0, memories.length - MAX_MEMORIES);
     save();
@@ -63,28 +72,31 @@ export async function addMemory(text, meta = {}) {
   }
 }
 
-export async function searchMemory(query, k = DEFAULT_TOP_K) {
+export async function searchMemory(query, k = DEFAULT_TOP_K, owner = null) {
   try {
     const [qvec] = await embedTexts([query]);
     if (!qvec) return [];
-    return rankMemories(memories, qvec, { k }).map((m) => m.text);
+    const pool = owner ? memories.filter((m) => ownedBy(m, owner)) : memories;
+    return rankMemories(pool, qvec, { k }).map((m) => m.text);
   } catch {
     return [];
   }
 }
 
-export async function searchMemoryDetailed(query, k = DEFAULT_TOP_K) {
+export async function searchMemoryDetailed(query, k = DEFAULT_TOP_K, owner = null) {
   try {
     const [qvec] = await embedTexts([query]);
     if (!qvec) return [];
-    return rankMemories(memories, qvec, { k });
+    const pool = owner ? memories.filter((m) => ownedBy(m, owner)) : memories;
+    return rankMemories(pool, qvec, { k });
   } catch {
     return [];
   }
 }
 
-export function listMemory() {
-  return memories.map((m) => m.text);
+export function listMemory(owner = null) {
+  const pool = owner ? memories.filter((m) => ownedBy(m, owner)) : memories;
+  return pool.map((m) => m.text);
 }
 
 export function memoryCount() {
@@ -96,3 +108,4 @@ export function _setMemoriesForTest(entries) {
 }
 
 export const MEMORY_LIMITS = { MAX_MEMORIES, DEFAULT_TOP_K, DEFAULT_THRESHOLD };
+export const PUBLIC = PUBLIC_OWNER;

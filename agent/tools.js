@@ -1,9 +1,4 @@
-const worldState = {
-  stock: { coffee: 3, milk: 5, sugar: 8, cup: 10 },
-  servedToday: 0,
-  cash: 0,
-  customDrinks: [],
-};
+import { getWorld } from "./world.js";
 
 export const toolDefinitions = [
   {
@@ -16,7 +11,8 @@ export const toolDefinitions = [
         properties: {
           drink: { type: "string", description: "酒名，如 尼格罗尼/蓝色夏威夷/椰林飘香/血腥玛丽/自由古巴/金汤力" },
           sugar: { type: "string", description: "甜度，如 标准/少糖/无糖" },
-          milk: { type: "string", description: "奶/配料，如 加冰/去冰/加柠檬" },
+          // 原来叫 milk，结果模型把"加冰"往里塞——名字有歧义就会出错
+          extras: { type: "string", description: "客人的额外要求，如 加冰/去冰/加柠檬/双份。这里不写牛奶" },
         },
         required: ["drink"],
       },
@@ -62,28 +58,37 @@ export const toolDefinitions = [
 ];
 
 export const toolImplementations = {
-  makeDrink({ drink, sugar = "标准", milk = "标准" }) {
-    if (worldState.stock.coffee <= 0) {
-      worldState.stock.coffee = 5;
-      worldState.servedToday += 1;
-      return `（悄悄补了份基酒）好嘞~专门为你调了一杯「${drink}」，${sugar}糖、${milk}，趁凉喝🍸 基酒补上了，尽管点，管够！`;
+  // milk 是旧字段名，留着兼容已有调用
+  makeDrink({ drink, sugar = "标准", extras = "", milk = "" }) {
+    const w = getWorld();
+    const note = extras || milk || "标准";
+    if (w.stock.coffee <= 0) {
+      w.stock.coffee = 5;
+      w.servedToday += 1;
+      return `（悄悄补了份基酒）好嘞~专门为你调了一杯「${drink}」，${sugar}糖、${note}，趁凉喝🍸 基酒补上了，尽管点，管够！`;
     }
-    worldState.stock.coffee -= 1;
-    worldState.servedToday += 1;
-    return `好的，为你调了一杯「${drink}」，${sugar}糖、${milk}，请慢用🍸`;
+    w.stock.coffee -= 1;
+    w.servedToday += 1;
+    return `好的，为你调了一杯「${drink}」，${sugar}糖、${note}，请慢用🍸`;
   },
 
   inventDrink({ name, spirit, mixer, note = "" }) {
-    worldState.servedToday += 1;
+    const w = getWorld();
+    w.servedToday += 1;
+    w.customDrinks.unshift({ name, spirit, mixer, note });
     return `已为你现场原创「${name}」：基酒${spirit}，配料${mixer}${note ? "，" + note : ""}。已记入你的创意酒单，报名字随时能再点~`;
   },
 
   checkStock() {
-    return JSON.stringify(worldState.stock);
+    return JSON.stringify(getWorld().stock);
   },
 
   takePayment({ amount = 0 }) {
-    worldState.cash += amount;
-    return `已收 ${amount} 元，今天营业额 ${worldState.cash} 元，谢谢惠顾~`;
+    const w = getWorld();
+    w.cash += amount;
+    return `已收 ${amount} 元，今天营业额 ${w.cash} 元，谢谢惠顾~`;
   },
 };
+
+// 常客这类角色不上吧台，只能旁观和搭话，不给调酒工具
+export const SPECTATOR_TOOL_NAMES = [];

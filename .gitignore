@@ -3,7 +3,7 @@ node_modules/
 
 # 密钥与运行时数据：绝不入库
 .env
-memory.json
+memory*.json
 vectorstore.json
 sessions.json
 traces.jsonl
