@@ -1,5 +1,7 @@
 # 星布谷地 · 岁月酒吧
 
+[![离线评测](https://github.com/1sun1-yjj/tavern-multiagent-npc/actions/workflows/eval-offline.yml/badge.svg)](https://github.com/1sun1-yjj/tavern-multiagent-npc/actions/workflows/eval-offline.yml)
+
 > **一个多 Agent 驱动的游戏 NPC 系统** —— 画面里不止一个角色：胡桃在吧台后调酒，钟离在角落坐了十年，导演在暗处安排这一拍该发生什么，场记盯着有没有人出戏。整条链路可追踪、可量化、可评测。
 
 玩家操控像素角色在酒吧里走动、坐到吧台前点单。可以跟胡桃说，也可以直接点名找钟离——两人各有各的记忆和立场，钟离不会替店里调酒，但会跟你唠两句。**他也不只是等着被点名的人**：你跟胡桃聊的时候他可能插一句，你安静下来的时候他会先找你说话。
@@ -397,6 +399,8 @@ node eval/run.js --no-reflection    # 关掉反思层，测路由基线
 产出 `eval/report.md`（人看）与 `eval/report.json`（机器读，`/api/eval` 会读它）。
 
 > ⚠️ **跑哪个套件就会把报告覆盖成哪个套件。** `npm run eval` 只跑离线 5 个套件，但它同样会覆盖 `eval/report.*`——想只做回归、不想动仓库里那份完整报告，加 `--no-report`。仓库里提交的那份是 `node eval/run.js --suite=all --fresh-state` 跑出来的。
+
+这 5 个离线套件同时跑在 GitHub Actions 上（`.github/workflows/eval-offline.yml`）：每次 push 与 PR 自动跑一遍，`--fresh-state` 从干净状态起跑，全程不需要任何密钥，跑完把 `eval/report.md` 与 `report.json` 作为构建产物传上去。所以顶部那个 badge 不是装饰——**它每次都会用 144 条用例把这份代码重新验一遍**。
 
 **评测默认不碰你正在玩的数据**：`run.js` 在加载 agent 模块前把 `TAVERN_STATE_SUFFIX` 设成 `.eval`，画像 / 向量库 / trace 都会落到 `memory.eval.json`、`vectorstore.eval.json`、`traces.eval.jsonl` 上（详见[已知限制](#已知限制)第 11 条）。
 

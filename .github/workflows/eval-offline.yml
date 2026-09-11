@@ -1,0 +1,39 @@
+name: 离线评测
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-eval:
+    name: 离线套件（144 条用例，零 token）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 跑离线套件
+        run: node eval/run.js --suite=offline --fresh-state
+
+      - name: 上传评测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-offline
+          path: |
+            eval/report.md
+            eval/report.json
+          if-no-files-found: ignore
