@@ -24,6 +24,7 @@ const heartEmpty = new Image(); heartEmpty.src = "assets/heart_empty.png";
 const walkL = new Image(); walkL.src = "assets/player_walk_l.png";
 const walkR = new Image(); walkR.src = "assets/player_walk_r.png";
 const backImg = new Image(); backImg.src = "assets/player_back.png";
+const regImg = new Image(); regImg.src = "assets/regular_sit.png";
 
 const player = {
   x: 130,
@@ -40,10 +41,22 @@ const P_FEET = 55;
 const keys = {};
 const MOVE_KEYS = ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"];
 const STOOLS = [
-  { x: 100, feetY: 162 },
   { x: 178, feetY: 162 },
   { x: 257, feetY: 162 },
 ];
+const REGULAR = {
+  x: 101,
+  feetY: 167,
+  centerX: 34,
+  feetLocalY: 62,
+  restUntil: 0,
+  sipStartedAt: 0,
+};
+const REG_REST_FRAME = 0;
+const REG_SIP_FRAMES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const REG_SIP_FPS = 7;
+const REG_REST_MIN = 2;
+const REG_REST_RAND = 2.5;
 const CV_W = 384, CV_H = 216;
 const FRAME_W = 66;
 const FRAME_H = 66;
@@ -75,7 +88,8 @@ let lastFrameTime = performance.now() / 1000;
 
 const npc = {
   thinking: false,
-  talkingUntil: 0,
+  speaker: "boss",
+  talkUntil: { boss: 0, regular: 0 },
 };
 
 const fx = {
@@ -102,13 +116,13 @@ function drawScene() {
     ctx.restore();
   }
 
-  const talking = npc.thinking || now < npc.talkingUntil;
+  const bossTalking = (npc.thinking && npc.speaker !== "regular") || now < npc.talkUntil.boss;
   const dt = now - lastFrameTime;
   lastFrameTime = now;
 
   const imgTop = GROUND_Y - FEET_LOCAL_Y;
 
-  if (talking) {
+  if (bossTalking) {
     const frame = Math.floor(now * TALK_FPS) % FRAME_COUNT;
     if (talkImg.complete) {
       ctx.drawImage(talkImg, frame * FRAME_W, 0, FRAME_W, FRAME_H, char.x, imgTop, FRAME_W, FRAME_H);
@@ -151,6 +165,7 @@ function drawScene() {
   }
 
   drawCounterOccluder();
+  drawRegular(now);
 
   let prompText = "";
   let pImg, pFrame;
@@ -252,6 +267,37 @@ function drawTalkBubble(bx, by, now) {
   }
 }
 
+function drawRegular(now) {
+  const talking = (npc.thinking && npc.speaker === "regular") || now < npc.talkUntil.regular;
+  const x = REGULAR.x - REGULAR.centerX;
+  const y = REGULAR.feetY - REGULAR.feetLocalY;
+
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(REGULAR.x, REGULAR.feetY, 16, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (regImg.complete) {
+    ctx.drawImage(regImg, regularFrame(now) * FRAME_W, 0, FRAME_W, FRAME_H, x, y, FRAME_W, FRAME_H);
+  }
+
+  if (talking) drawTalkBubble(REGULAR.x - 22, y - 16, now);
+}
+
+function regularFrame(now) {
+  if (!REGULAR.restUntil) REGULAR.restUntil = now + 1.2;
+
+  if (now < REGULAR.restUntil) return REG_REST_FRAME;
+
+  if (!REGULAR.sipStartedAt) REGULAR.sipStartedAt = now;
+  const step = Math.floor((now - REGULAR.sipStartedAt) * REG_SIP_FPS);
+  if (step < REG_SIP_FRAMES.length) return REG_SIP_FRAMES[step];
+
+  REGULAR.sipStartedAt = 0;
+  REGULAR.restUntil = now + REG_REST_MIN + Math.random() * REG_REST_RAND;
+  return REG_REST_FRAME;
+}
+
 function drawGamePanel() {
   const PX = 10, PY = 8, PW = 116, PH = 44;
 
@@ -293,8 +339,8 @@ function setChatEnabled(enabled) {
   customBtn.disabled = !enabled;
   menuBtn.disabled = !enabled;
   input.placeholder = enabled
-    ? "和老板娘说点什么…（例：给我来一杯尼格罗尼）"
-    : "先走到吧台椅旁按 E 坐下，才能和老板娘聊天…";
+    ? "和胡桃说点什么…（例：给我来一杯尼格罗尼）"
+    : "先走到吧台椅旁按 E 坐下，才能和胡桃聊天…";
 }
 
 function appendMessage(role, text, asDots) {
@@ -318,7 +364,7 @@ function appendBadge(text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-const SPEAKERS = { boss: "老板娘", regular: "老周" };
+const SPEAKERS = { boss: "胡桃", regular: "钟离" };
 let castList = [];
 let lastWorld = null;
 let lastBudget = null;
@@ -392,18 +438,108 @@ async function readSSE(res, onEvent) {
 
 function handleAction(a) {
   const n = who(a.actor);
+  const args = a.args || {};
   if (a.name === "makeDrink") {
-    appendBadge(`🍸 ${n}调了「${a.args.drink}」`);
+    appendBadge(`🍸 ${n}调了「${args.drink || "一杯酒"}」`);
   } else if (a.name === "inventDrink") {
-    appendBadge(`🎨 ${n}原创了一杯「${a.args.name}」`);
+    appendBadge(`🎨 ${n}原创了一杯「${args.name || "无名特调"}」`);
   } else if (a.name === "takePayment") {
-    appendBadge(`💰 ${n}收了 ${a.args.amount} 元`);
-  } else {
+    appendBadge(`💰 ${n}收了 ${args.amount ?? 0} 元`);
+  } else if (a.name === "checkStock") {
     appendBadge(`🛠 ${n}查了查库存`);
+  } else {
+    appendBadge(`🛠 ${n}用了 ${a.name}`);
   }
 }
 
 const targetSel = document.getElementById("target");
+
+const staging = {};
+window.__tavernStaging = staging;
+
+function applyStage(ev) {
+  if (!ev || !ev.actor) return;
+  staging[ev.actor] = {
+    action: ev.action,
+    near: Boolean(ev.near),
+    anchor: ev.anchor || null,
+    pose: ev.pose || null,
+    x: ev.x ?? null,
+    feetY: ev.feetY ?? null,
+    at: performance.now() / 1000,
+  };
+}
+
+function createRenderCtx() {
+  const slots = new Map();
+  const texts = new Map();
+  const slot = (actor) => {
+    if (!slots.has(actor)) {
+      slots.set(actor, appendSpeaker(actor));
+      texts.set(actor, "");
+    }
+    return slots.get(actor);
+  };
+  return { slots, texts, slot, lastActor: "boss" };
+}
+
+function renderStreamEvent(ev, ctx) {
+  if (ev.type === "delta") {
+    const actor = ev.actor || "boss";
+    ctx.lastActor = actor;
+    const s = ctx.slot(actor);
+    s.clear();
+    const cur = (ctx.texts.get(actor) || "") + ev.text;
+    ctx.texts.set(actor, cur);
+    s.body.textContent = cur;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    npc.speaker = actor;
+    npc.talkUntil[actor] = performance.now() / 1000 + 0.6;
+    markActivity();
+  } else if (ev.type === "reset") {
+    const actor = ev.actor || "boss";
+    ctx.texts.set(actor, "");
+    ctx.slot(actor).clear();
+  } else if (ev.type === "action") {
+    handleAction(ev);
+  } else if (ev.type === "stage") {
+    applyStage(ev);
+  } else if (ev.type === "budget_exhausted") {
+    appendBadge(`⏹ 这一轮已经花掉 ${ev.used} 次模型调用，先停一下`);
+  } else if (ev.type === "guard_replaced") {
+    const actor = ev.actor || "boss";
+    ctx.slot(actor).set(ev.reply);
+    ctx.texts.set(actor, ev.reply);
+  } else if (ev.type === "done") {
+    npc.thinking = false;
+    if (ev.game) {
+      gameState = { ...gameState, ...ev.game };
+      if (ev.game.levelUp) {
+        appendBadge(`❤ 好感度提升了！现在是「${ev.game.levelName}」啦`);
+      }
+    }
+    if (ev.world) lastWorld = ev.world;
+    if (ev.budget) lastBudget = ev.budget;
+    renderWorld();
+    fillMissingReplies(ev, ctx);
+    markActivity();
+  } else if (ev.type === "error") {
+    ctx.slot(ctx.lastActor).set("（这边出了点小状况…）" + (ev.error ? `\n${ev.error}` : ""));
+  }
+}
+
+function fillMissingReplies(ev, ctx) {
+  const replies = ev.replies && Object.keys(ev.replies).length
+    ? ev.replies
+    : (ev.reply ? { [ev.speaker || "boss"]: ev.reply } : {});
+  for (const [actor, text] of Object.entries(replies)) {
+    if (!text) continue;
+    if ((ctx.texts.get(actor) || "").trim()) continue;
+    ctx.slot(actor).set(text);
+    ctx.texts.set(actor, text);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
 
 async function send(overrideText) {
   const text = (overrideText !== undefined ? overrideText : input.value).trim();
@@ -416,18 +552,11 @@ async function send(overrideText) {
   }
 
   appendMessage("user", text);
+  markActivity();
 
-  const slots = new Map();
-  const texts = new Map();
-  const slot = (actor) => {
-    if (!slots.has(actor)) {
-      slots.set(actor, appendSpeaker(actor));
-      texts.set(actor, "");
-    }
-    return slots.get(actor);
-  };
-  let lastActor = "boss";
+  const ctx = createRenderCtx();
   npc.thinking = true;
+  npc.speaker = targetSel.value || "boss";
 
   try {
     const res = await fetch("/api/chat", {
@@ -440,47 +569,9 @@ async function send(overrideText) {
       throw new Error(err.error || "请求失败了");
     }
 
-    await readSSE(res, (ev) => {
-      if (ev.type === "delta") {
-        const actor = ev.actor || "boss";
-        lastActor = actor;
-        const s = slot(actor);
-        s.clear();
-        const cur = (texts.get(actor) || "") + ev.text;
-        texts.set(actor, cur);
-        s.body.textContent = cur;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-        npc.talkingUntil = performance.now() / 1000 + 0.6;
-      } else if (ev.type === "action") {
-        handleAction(ev);
-      } else if (ev.type === "beat") {
-        appendBadge(`🎬 导演安排：${who(ev.assignee)}该${ev.goal}`);
-      } else if (ev.type === "critic") {
-        appendBadge(`🧐 场记记了一笔：${ev.issue}`);
-      } else if (ev.type === "budget_exhausted") {
-        appendBadge(`⏹ 这一轮已经花掉 ${ev.used} 次模型调用，先停一下`);
-      } else if (ev.type === "guard_replaced") {
-        const actor = ev.actor || "boss";
-        slot(actor).set(ev.reply);
-        texts.set(actor, ev.reply);
-        appendBadge("🛡 有一句话说得不对味，已经换掉");
-      } else if (ev.type === "done") {
-        npc.thinking = false;
-        if (ev.game) {
-          gameState = { ...gameState, ...ev.game };
-          if (ev.game.levelUp) {
-            appendBadge(`❤ 好感度提升了！现在是「${ev.game.levelName}」啦`);
-          }
-        }
-        if (ev.world) lastWorld = ev.world;
-        if (ev.budget) lastBudget = ev.budget;
-        renderWorld();
-      } else if (ev.type === "error") {
-        slot(lastActor).set("（这边出了点小状况…）" + (ev.error ? `\n${ev.error}` : ""));
-      }
-    });
+    await readSSE(res, (ev) => renderStreamEvent(ev, ctx));
   } catch (e) {
-    slot(lastActor).set(e.message || "没反应…看看服务端日志？");
+    ctx.slot(ctx.lastActor).set(e.message || "没反应…看看服务端日志？");
     npc.thinking = false;
   }
 }
@@ -489,14 +580,61 @@ sendBtn.addEventListener("click", send);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); send(); }
 });
+document.addEventListener("focusin", (e) => { if (isTypingTarget(e.target)) clearKeys(); });
+
+const AMBIENT_TICK_MS = 5000;
+const AMBIENT_IDLE_MS = 15000;
+let lastInteractionAt = performance.now() / 1000;
+let ambientBusy = false;
+let ambientEnabled = true;
+
+function markActivity() {
+  lastInteractionAt = performance.now() / 1000;
+}
+
+async function tryAmbient() {
+  if (ambientBusy || npc.thinking || !ambientEnabled) return;
+  if (!player.sitting) return;
+  if (input.value.trim()) return;
+  const idleMs = (performance.now() / 1000 - lastInteractionAt) * 1000;
+  if (idleMs < AMBIENT_IDLE_MS) return;
+
+  ambientBusy = true;
+  const ctx = createRenderCtx();
+  try {
+    const res = await fetch("/api/ambient", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, idleMs }),
+    });
+    if (!res.ok) return;
+    await readSSE(res, (ev) => renderStreamEvent(ev, ctx));
+  } catch {
+  } finally {
+    ambientBusy = false;
+  }
+}
+
+setInterval(tryAmbient, AMBIENT_TICK_MS);
+
+function isTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable === true;
+}
 
 document.addEventListener("keydown", (e) => {
+  if (isTypingTarget(e.target)) return;
   const k = e.key.toLowerCase();
   keys[k] = true;
   if (MOVE_KEYS.includes(k)) e.preventDefault();
   if (k === "e" && !e.repeat) toggleSit();
 });
 document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+function clearKeys() {
+  for (const k of Object.keys(keys)) keys[k] = false;
+}
 
 function nearestStool() {
   let best = null, bestD = 30;
@@ -522,7 +660,7 @@ function toggleSit() {
   player.x = seat.x;
   player.feetY = seat.feetY;
   setChatEnabled(true);
-  appendBadge("🪑 你坐到了吧台前，可以和老板娘聊天了");
+  appendBadge("🪑 你坐到了吧台前，可以和胡桃聊天了");
 }
 
 const DRINKS = [
@@ -669,9 +807,10 @@ async function checkHealth() {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
+    ambientEnabled = data.initiative !== false;
     if (data.hasKey) {
       const names = (data.cast || []).map((c) => c.name).join("、");
-      statusEl.textContent = `在场：${names}（${data.model}）。A/D 或 ←/→ 移动，W/S 或 ↑/↓ 前后；走到吧台椅旁按 E 坐下才能聊天。也可以直接点名，比如“老周，你怎么看？”`;
+      statusEl.textContent = `在场：${names}（${data.model}）。A/D 或 ←/→ 移动，W/S 或 ↑/↓ 前后；走到吧台椅旁按 E 坐下才能聊天。也可以直接点名，比如“钟离，你怎么看？”安静一会儿，旁边的人可能会先开口。`;
       statusEl.className = "status ok";
     } else {
       statusEl.textContent = "大脑还没接好：请复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY 后重启服务。";

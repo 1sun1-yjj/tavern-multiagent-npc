@@ -19,6 +19,7 @@
     --safety: #e08a3c;
     --reflection: #d6689a;
     --intent: #7c8a99;
+  --critic: #3fb8ad;
     --bad: #e05c5c;
   }
   * { box-sizing: border-box; }
@@ -112,11 +113,14 @@
 const KIND_COLOR = {
   llm: "var(--llm)", tool: "var(--tool)", memory: "var(--memory)",
   safety: "var(--safety)", reflection: "var(--reflection)", intent: "var(--intent)",
+  beat: "var(--accent)", critic: "var(--critic)",
 };
 const KIND_LABEL = {
   llm: "LLM", tool: "工具", memory: "记忆", safety: "安全",
-  reflection: "反思", intent: "意图",
+  reflection: "反思", intent: "意图", beat: "导演", critic: "场记",
 };
+const ACTOR_NAME = { boss: "胡桃", regular: "钟离", director: "导演", critic: "场记", player: "玩家" };
+const whoName = (id) => ACTOR_NAME[id] || id || "—";
 
 let selectedId = null;
 let traces = [];
@@ -145,7 +149,7 @@ function renderCards(m) {
     c("总成本（估）", "¥" + num(m.cost.totalCNY, 4), "平均 ¥" + num(m.cost.avgCNY, 6)),
     c("平均编排轮数", num(m.agent.avgLoops, 2), "平均工具调用 " + num(m.agent.avgToolCalls, 2)),
     c("反思 / 触发重试", m.agent.reflections + " / " + m.agent.reflectionRetries, "自评判定不通过的次数"),
-    c("安全拦截", m.safety.blocks, (m.safety.blockRate * 100).toFixed(2) + "%"),
+    c("安全拦截", m.safety.blocks, (m.safety.blockRate * 100).toFixed(2) + "% ｜ 骂人标记 " + (m.safety.abuseFlags || 0)),
   ].join("");
 }
 
@@ -198,7 +202,21 @@ function detailOf(s) {
     if (d.reason) return "跳过：" + d.reason;
     return "";
   }
-  if (s.kind === "safety") return s.detail.action + (s.detail.reason ? "：" + s.detail.reason : "");
+  if (s.kind === "beat") {
+    if (d.degraded) return "规划降级：未返回有效 assignee";
+    if (d.error) return "规划失败：" + d.error;
+    return "本拍目标：" + String(d.goal || "") + " ｜ 交给 " + whoName(d.assignee) + (d.why ? " ｜ " + d.why : "");
+  }
+  if (s.kind === "critic") {
+    if (d.error) return "评审失败：" + d.error;
+    if (d.verdict !== "revise") return "通过";
+    return "要求改：" + String(d.issue || "") + (d.hint ? " ｜ 建议：" + d.hint : "");
+  }
+  if (s.kind === "safety") {
+    if (d.action) return d.action + (d.reason ? "：" + d.reason : "") + (d.abuse ? " ｜ 骂人标记" : "");
+    if (d.error) return "拦截台词改写失败，已回退兜底：" + d.error;
+    return (d.styled ? "拦截台词由模型改写" : "拦截台词回退兜底") + (d.reason ? "：" + d.reason : "");
+  }
   if (s.kind === "reflection") return d.verdict + (d.issue ? "：" + d.issue : "") + (d.retried ? " → 已重试" : "");
   if (s.kind === "intent") return d.forced ? "强制工具 " + d.forcedTool : "无强制";
   return "";

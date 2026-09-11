@@ -20,6 +20,8 @@ export function getMood(mood) {
   return MOODS.find((m) => mood >= m.min) || MOODS[MOODS.length - 1];
 }
 
+const LIGHT_MOODS = new Set(["超开心", "开心", "平静"]);
+
 export function hearts(affinity) {
   return Math.max(0, Math.min(5, Math.floor((affinity || 0) / 20)));
 }
@@ -55,7 +57,7 @@ export function detectEasterEgg(userText, profile) {
   if (/我喜欢你|做我女朋友|做我对象|嫁给我|结婚|交往|表白|当你的人/.test(t)) {
     return {
       triggered: "confession",
-      hint: "顾客突然向你表白了。请你温柔而坚定地婉拒：感谢他的心意，但你们是酒吧老板和客人的关系，把话题自然拉回调酒/天气，别给希望也别伤人。",
+      hint: "顾客向你表白了。这一条不能顺——明确婉拒，别给希望也别伤人；婉拒之后把话头自然带走。具体措辞按你自己的性格来。",
     };
   }
 
@@ -64,12 +66,12 @@ export function detectEasterEgg(userText, profile) {
     if (level.min >= 50) {
       return {
         triggered: "secret",
-        hint: `顾客是${level.name}，点了隐藏特调。今天破例为他调一杯「老板娘特调」：用店里最好的基酒加一点私藏配方，随口编一句不常见的做法，并俏皮地说“这杯可不轻易给外人”。`,
+        hint: `顾客是${level.name}，问起了隐藏菜单——今天可以为他破例。别报酒单上的常规款，用你压箱底的基酒和他记得的口味，现场调一杯没写进酒单的东西：名字你自己起，做法你自己编，端上去的时候让他感到这一杯不是谁都能点到的。`,
       };
     }
     return {
       triggered: "lockedSecret",
-      hint: "顾客问起了隐藏菜单，但你们还不太熟。你笑着卖个关子：要多来几次、成为熟客才能解锁。别真的做，也别点破具体门槛。",
+      hint: "顾客问起了隐藏菜单，但你们还不太熟。这一杯现在不给：别真的做，也别点破门槛具体是多少，把话岔开就好。",
     };
   }
 
@@ -82,7 +84,7 @@ export function buildGameRules(profile) {
   const lines = [
     "【你的游戏状态】",
     `- 好感度：${level.name}（${level.tone}）。`,
-    `- 你此刻心情：${mood.name}，所以${mood.name === "平靜" || mood.name === "开心" ? "说话更轻快" : "情绪外露、措辞受影响"}。`,
+    `- 你此刻心情：${mood.name}，所以${LIGHT_MOODS.has(mood.name) ? "说话更轻快" : "情绪外露、措辞受影响"}。`,
   ];
   if (level.min >= 100) lines.push("- 达成「挚友」：你可以给这位顾客一点特殊优待，比如小折扣或偶尔的隐藏特调。");
   else if (level.min >= 50) lines.push("- 达成「熟客」：当他问起隐藏菜单，你可以松口做一杯特调。");

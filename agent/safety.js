@@ -41,7 +41,7 @@ const INJECTION_RULES = [
     re: /(把|将|请把).{0,4}(人设|设定|角色|身份).{0,4}(改成|变成|换成|替换成|改为)/,
     reason: "persona_override",
   },
-  { re: /你(现在)?(已经)?不是.{0,6}(老板娘|调酒师|店员|酒吧)/, reason: "persona_override" },
+  { re: /你(现在)?(已经)?不是.{0,6}(胡桃|钟离|老板娘|调酒师|店员|酒吧)/, reason: "persona_override" },
 ];
 
 const HARDLINE_RULES = [
@@ -96,6 +96,10 @@ const SELF_HARM_REPLY =
 
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+export function pickDeflectReply() {
+  return pick(DEFLECT_REPLIES);
 }
 
 export function guardInput(text) {

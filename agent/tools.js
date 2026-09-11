@@ -60,12 +60,12 @@ export const toolImplementations = {
   makeDrink({ drink, sugar = "标准", extras = "", milk = "" }) {
     const w = getWorld();
     const note = extras || milk || "标准";
-    if (w.stock.coffee <= 0) {
-      w.stock.coffee = 5;
+    if ((w.stock.基酒 || 0) <= 0) {
+      w.stock.基酒 = 3;
       w.servedToday += 1;
-      return `（悄悄补了份基酒）好嘞~专门为你调了一杯「${drink}」，${sugar}糖、${note}，趁凉喝🍸 基酒补上了，尽管点，管够！`;
+      return `（顺手从后厨又拎了一瓶基酒上来）好嘞~专门为你调了一杯「${drink}」，${sugar}糖、${note}，趁凉喝🍸 基酒补上了，尽管点，管够！`;
     }
-    w.stock.coffee -= 1;
+    w.stock.基酒 -= 1;
     w.servedToday += 1;
     return `好的，为你调了一杯「${drink}」，${sugar}糖、${note}，请慢用🍸`;
   },

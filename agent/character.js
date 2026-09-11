@@ -23,14 +23,22 @@ const MAX_LOOPS = Number(process.env.MAX_AGENT_LOOPS || 6);
 const HISTORY_LIMIT = 16;
 const HISTORY_KEEP_RECENT = 8;
 
+function toolCallKey(name, args) {
+  const keys = Object.keys(args || {}).sort();
+  return `${name}::${JSON.stringify(keys.map((k) => [k, args[k]]))}`;
+}
+
 export function createCharacter({ id, name, aliases = [], persona, memoryNs = "default", tools = [], goalStyle = "" }) {
   const toolDefs = tools.length ? toolDefinitions.filter((t) => tools.includes(t.function.name)) : [];
   const allowed = new Set(tools);
+  const requiredArgs = (toolName) =>
+    (toolDefs.find((t) => t.function.name === toolName)?.function.parameters?.required || []);
 
   const api = {
     id,
     name,
     aliases,
+    tools: [...allowed],
     persona,
 
     getProfile() {
@@ -41,13 +49,24 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       saveProfile(profile, memoryNs);
     },
 
-    async react({ bus, trace, budget }) {
-      if (!budget.spend("react")) return { speak: false, urgency: 0, angle: "" };
+    async react({ bus, trace, budget, phase = "parallel", sinceSpeak = null }) {
+      if (!budget.spend("react")) return { speak: false, urgency: 0, angle: "", reason: "" };
 
       const recent = bus
         .recentEvents(4)
         .map(formatEvent)
         .join("\n");
+
+      const here = getWorld().present.filter((p) => p !== id);
+      const crowd = here.length
+        ? `此刻店里除了你和顾客，还有：${here.map(displayName).join("、")}。他们就在场，别把人说成不在、没来或者没见着人影。\n`
+        : `此刻店里除了你和顾客，没有别人。\n`;
+
+      const myTurn = sinceSpeak == null
+        ? `你今晚还一句话都没说过。\n`
+        : sinceSpeak <= 1
+          ? `你上一拍刚开过口，这一拍就别急着再接。\n`
+          : `你上一次开口是 ${sinceSpeak} 拍之前。\n`;
 
       const t0 = Date.now();
       const { chatWithModel } = await import("./llm.js");
@@ -60,19 +79,36 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
               content:
                 `你是「${name}」。${goalStyle}\n` +
                 `你正在这家酒吧里，刚听到了下面这些事。\n` +
-                `判断你是否想插一句话。酒吧里邻座搭话是很自然的事，如果话头跟你有关系、或者你有想说的，就该开口，不用太客气。\n` +
-                `只有在这件事确实跟你毫无关系、或者你没什么可说的时候，才 speak=false。\n` +
-                `urgency 用 0 到 1 表示你有多想说（0.3 = 随口一句，0.8 = 很想说）。\n` +
-                `只输出 JSON：{"speak":true,"urgency":0.5,"angle":"你想说的那句话的大意"}`,
+                crowd +
+                myTurn +
+                (phase === "followup"
+                  ? `最后那一句是别人刚说的。你可以顺着那一句接，也可以只对客人说。\n`
+                  : "") +
+                `现在判断这一拍你要不要开口。默认答案是不说——你是个在角落里喝酒听人说话的人，多数时候不插嘴，偶尔说一句才有分量。\n` +
+                `只有下面这几种情况才值得开口：\n` +
+                `- 有人直接叫了你的名字，或者问到了你\n` +
+                `- 你手上有别人没有的东西：这条街的事、你坐这些年看见的事、你自己身上的事\n` +
+                `- 你确实不认同对方说的，而且说出来有用\n` +
+                `下面这些都不是理由，出现就别开口：\n` +
+                `- 捧场、附和、把别人的话换个说法再说一遍（"说得在理""确实""没错"）\n` +
+                `- 只是想让客人注意到你，或者想显摆自己在这儿坐了多少年\n` +
+                `- 客人刚进门、还在跟老板娘寒暄，这事跟你没关系\n` +
+                `- 你刚才已经说过了\n` +
+                `urgency 只在开口时才有意义：0.6 = 有点想说，0.8 = 很想说，1 = 非说不可。\n` +
+                `只输出 JSON：{"speak":false,"urgency":0,"angle":"","reason":"一句话说明为什么开口，或者为什么不说"}`,
             },
             { role: "user", content: recent || "（还没有什么特别的事）" },
           ],
         });
         const parsed = parseLooseJson(res.content);
+        const reason = String(parsed?.reason || "").slice(0, 80);
+        const wanted = Boolean(parsed?.speak);
         const out = {
-          speak: Boolean(parsed?.speak),
+          speak: wanted && Boolean(reason),
           urgency: Number(parsed?.urgency || 0),
           angle: String(parsed?.angle || "").slice(0, 60),
+          reason,
+          downgraded: wanted && !reason,
         };
         if (res.usage) {
           budget.addUsage(res.usage);
@@ -83,26 +119,27 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
           actor: id,
           name: "react",
           durMs: Date.now() - t0,
-          detail: { ...out, tokens: res.usage?.total_tokens ?? null },
+          detail: { phase, ...out, tokens: res.usage?.total_tokens ?? null },
         });
         return out;
       } catch (e) {
-        addSpan(trace, { kind: "react", actor: id, name: "react", durMs: Date.now() - t0, ok: false, detail: { error: e.message } });
-        return { speak: false, urgency: 0, angle: "" };
+        addSpan(trace, { kind: "react", actor: id, name: "react", durMs: Date.now() - t0, ok: false, detail: { phase, error: e.message } });
+        return { speak: false, urgency: 0, angle: "", reason: "" };
       }
     },
 
-    async *act({ bus, trace, budget, beat, playerText, history = [], observed = false }) {
+    async *act({ bus, trace, budget, beat, playerText, history = [], observed = false, initiated = false, criticNote = "" }) {
       const profile = api.getProfile();
       const { intent, tool } = detectIntent(playerText);
       const forcedTool = tool && allowed.has(tool) ? { type: "function", function: { name: tool } } : null;
+      const activeToolDefs = observed && !tool ? [] : toolDefs;
 
       addSpan(trace, {
         kind: "intent",
         actor: id,
         name: intent || "none",
         durMs: 0,
-        detail: { forcedTool: tool, forced: Boolean(forcedTool) },
+        detail: { forcedTool: tool, forced: Boolean(forcedTool), toolsOffered: activeToolDefs.length },
       });
 
       const egg = id === "boss" ? detectEasterEgg(playerText, profile) : { hint: "" };
@@ -122,15 +159,23 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       }
 
       const scene = bus.recentEvents(6).map(formatEvent).join("\n");
-      const beatLine = beat ? `\n【本拍你要做的事】${beat.goal}` : "";
-      const userContent = observed
-        ? `（旁边有人在说话，你听见了：「${playerText}」）\n` +
-          (beat ? `你想接的话头：${beat.goal}` : "有想说的就接一句，没什么可说就简短应一声。")
-        : playerText;
+      const note = criticNote ? `\n【场记对上一拍的意见】${criticNote}` : "";
+      const beatLine = !beat
+        ? ""
+        : beat.from
+          ? `\n【你想接的话头】${beat.goal}\n（这只是个话头：如果它跟你知道的事实冲突——比如把在场的人说成不在——按事实来。）`
+          : `\n【本拍你要做的事】${beat.goal}`;
+      const userContent = initiated
+        ? "（吧台前那位客人有一会儿没开口了。你主动起个话头，跟他说一句。）"
+        : observed
+          ? `（旁边有人在说话，你听见了：「${playerText}」）\n` +
+            (beat ? `你想接的话头：${beat.goal}` : "有想说的就接一句，没什么可说就简短应一声。") +
+            (tool ? "" : "\n（这句不是在跟你点单，别去动吧台的工具。）")
+          : playerText;
       const msgs = [
         {
           role: "system",
-          content: api.buildSystemPrompt(profile, egg.hint, memoryNote, scene, beatLine, playerText),
+          content: api.buildSystemPrompt(profile, egg.hint, memoryNote, scene + note, beatLine, playerText),
         },
         ...history,
         { role: "user", content: userContent },
@@ -141,15 +186,21 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       let loops = 0;
       let inventedOnce = false;
       let reflectedOnce = false;
+      let resetPending = false;
+      const executed = new Map();
 
       while (loops < MAX_LOOPS) {
         if (!budget.spend("act")) break;
+        if (resetPending) {
+          resetPending = false;
+          yield { type: "reset", actor: id };
+        }
         const toolChoice = loops === 0 && forcedTool ? forcedTool : "auto";
         let message = null;
         let meta = null;
         let stepContent = "";
 
-        for await (const ev of chatStream({ messages: msgs, tools: toolDefs, toolChoice })) {
+        for await (const ev of chatStream({ messages: msgs, tools: activeToolDefs, toolChoice })) {
           if (ev.kind === "delta") {
             stepContent += ev.text;
             yield { type: "delta", actor: id, text: ev.text };
@@ -196,8 +247,27 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
               continue;
             }
 
+            const missing = requiredArgs(name).filter((k) => {
+              const v = args[k];
+              return v === undefined || v === null || (typeof v === "string" && !v.trim());
+            });
+            if (missing.length) {
+              const result = `调用 ${name} 缺少必填参数：${missing.join("、")}。请补齐参数后重新调用。`;
+              msgs.push({ role: "tool", tool_call_id: tc.id, content: result });
+              recordTool(trace, { actor: id, name, args, result, latencyMs: 0, ok: false });
+              continue;
+            }
+
             if (name === "inventDrink" && inventedOnce) {
               const result = "这杯酒已经原创好了，别再重复创作；直接把刚才那杯端给客人，并用一句话回答即可。";
+              msgs.push({ role: "tool", tool_call_id: tc.id, content: result });
+              recordTool(trace, { actor: id, name, args, result, latencyMs: 0, ok: true });
+              continue;
+            }
+
+            const execKey = toolCallKey(name, args);
+            if (executed.has(execKey)) {
+              const result = `这一步本轮已经执行过了，不要再重复执行：${executed.get(execKey)}`;
               msgs.push({ role: "tool", tool_call_id: tc.id, content: result });
               recordTool(trace, { actor: id, name, args, result, latencyMs: 0, ok: true });
               continue;
@@ -214,8 +284,9 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
               ok = false;
               result = `工具执行出错：${e.message}`;
             }
+            if (ok) executed.set(execKey, String(result));
 
-            if (name === "inventDrink") {
+            if (name === "inventDrink" && ok) {
               inventedOnce = true;
               if (!profile.customDrinks) profile.customDrinks = [];
               profile.customDrinks.unshift({
@@ -256,6 +327,7 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
             if (willRetry) msgs.push({ role: "system", content: buildRevisionMessage(r) });
           }
 
+          resetPending = true;
           continue;
         }
 
@@ -292,7 +364,7 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
         }
       }
 
-      history.push({ role: "user", content: playerText });
+      history.push({ role: "user", content: initiated ? "（你主动开了个话头）" : playerText });
       history.push({ role: "assistant", content: reply });
       if (history.length > HISTORY_LIMIT) {
         const tCompact = timer();
@@ -317,7 +389,9 @@ export function createCharacter({ id, name, aliases = [], persona, memoryNs = "d
       const egg = eggHint ? `\n【本轮特别剧情】${eggHint}` : "";
       const vec = memoryNote ? `\n【你记得的相关往事（语义检索）】\n${memoryNote}` : "";
       const others = getWorld().present.filter((p) => p !== id).map(displayName);
-      const crowd = others.length ? `\n【在场的人】除了顾客，还有：${others.join("、")}。` : "";
+      const crowd = others.length
+        ? `\n【在场的人】除了顾客，还有：${others.join("、")}。他们就在店里坐着，别说成不在、没来或者没见着人影。`
+        : "";
       const sc = scene ? `\n【刚才发生了什么】\n${scene}` : "";
       return [persona, game, crowd, memo, sc, beatLine || "", egg, vec].filter(Boolean).join("\n");
     },
@@ -404,8 +478,8 @@ async function extractMemory(userText, reply, profile, owner, trace) {
   try {
     const res = await chatWithModel({
       messages: [
-        { role: "system", content: "你是酒吧老板娘的记忆助手。从下面这段对话里提炼出【值得长期记住的事实】——顾客的名字、喜欢的口味/基酒、点过的酒、说过的喜好或约定。用一句不超过15个字的话概括，只输出这一句，不要加前缀；没有可记的就输出空字符串。" },
-        { role: "user", content: `顾客：${userText}\n老板娘：${reply}\n（已知：顾客叫「${profile.customerName || "未知"}」，最爱「${profile.favoriteDrink || "未知"}」）` },
+        { role: "system", content: `你是这家酒吧的记忆助手。从下面这段对话里提炼出【值得长期记住的事实】——顾客的名字、喜欢的口味/基酒、点过的酒、说过的喜好或约定。用一句不超过15个字的话概括，只输出这一句，不要加前缀；没有可记的就输出空字符串。` },
+        { role: "user", content: `顾客：${userText}\n${displayName(owner)}：${reply}\n（已知：顾客叫「${profile.customerName || "未知"}」，最爱「${profile.favoriteDrink || "未知"}」）` },
       ],
     });
     if (res.usage && trace) recordAuxLLM(trace, { actor: owner, usage: res.usage, latencyMs: res.latencyMs });

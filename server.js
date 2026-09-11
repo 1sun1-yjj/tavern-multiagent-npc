@@ -3,12 +3,13 @@ import "dotenv/config";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { runAgentStream, getRoster } from "./agent/agent.js";
+import { runAgentStream, runAmbientStream, getRoster } from "./agent/agent.js";
 import { loadProfile } from "./agent/memory.js";
 import { listMemory } from "./agent/vectorstore.js";
 import { listTraces, getTrace, metrics } from "./agent/telemetry.js";
 import { snapshot as worldSnapshot, resetWorld, enter, leave, presentActors } from "./agent/world.js";
 import { sceneInfo } from "./agent/scene.js";
+import { initiativeEnabled } from "./agent/initiative.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -36,6 +37,12 @@ app.get("/api/health", (_req, res) => {
     vectorMemory: hasVectorKey(),
     reflection: process.env.REFLECTION_ENABLED !== "0",
     safety: process.env.SAFETY_ENABLED !== "0",
+    initiative: initiativeEnabled(),
+    ambient: {
+      chance: Number(process.env.GUEST_INITIATIVE_CHANCE ?? 0.35),
+      minIdleMs: Number(process.env.GUEST_INITIATIVE_MIN_IDLE_MS ?? 20000),
+      gapMs: Number(process.env.GUEST_INITIATIVE_GAP_MS ?? 45000),
+    },
     cast: getRoster(),
   });
 });
@@ -96,6 +103,27 @@ app.get("/api/eval", (_req, res) => {
 });
 
 let sessions = loadSessions();
+const lastActivity = new Map();
+
+function markActivity(sessionId) {
+  lastActivity.set(sessionId, Date.now());
+}
+
+function idleMsSince(sessionId, claimed) {
+  const last = lastActivity.get(sessionId);
+  const serverIdle = last ? Date.now() - last : Number.MAX_SAFE_INTEGER;
+  const said = Number(claimed);
+  if (!Number.isFinite(said) || said < 0) return serverIdle;
+  return Math.min(said, serverIdle);
+}
+
+function openStream(res) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  return (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+}
 
 function loadSessions() {
   try {
@@ -131,13 +159,9 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const histories = ensureSession(sessionId);
+  markActivity(sessionId);
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const send = openStream(res);
 
   try {
     for await (const ev of runAgentStream({ userText: text, sessionId, target, histories })) {
@@ -149,6 +173,30 @@ app.post("/api/chat", async (req, res) => {
     send({ type: "delta", actor: "boss", text: "（店长这边好像出了点小状况…看看浏览器 console 或服务端日志？）" });
     send({ type: "error", error: e.message });
   } finally {
+    markActivity(sessionId);
+    saveSessions();
+    res.end();
+  }
+});
+
+app.post("/api/ambient", async (req, res) => {
+  const { sessionId = "default", idleMs = 0, force = false } = req.body || {};
+  const histories = ensureSession(sessionId);
+  const effectiveIdle = idleMsSince(sessionId, idleMs);
+  markActivity(sessionId);
+
+  const send = openStream(res);
+
+  try {
+    for await (const ev of runAmbientStream({ sessionId, histories, idleMs: effectiveIdle, force: force === true })) {
+      if (res.writableEnded) break;
+      send(ev);
+    }
+  } catch (e) {
+    console.error("[server] /api/ambient 出错：", e.message);
+    send({ type: "error", error: e.message });
+  } finally {
+    markActivity(sessionId);
     saveSessions();
     res.end();
   }
@@ -163,7 +211,8 @@ app.listen(PORT, () => {
   console.log(`   角色：${cast}`);
   console.log(
     `   向量记忆：${on(hasVectorKey())} ｜ 反思复核：${on(process.env.REFLECTION_ENABLED !== "0")}` +
-      ` ｜ 安全守卫：${on(process.env.SAFETY_ENABLED !== "0")}`
+      ` ｜ 安全守卫：${on(process.env.SAFETY_ENABLED !== "0")}` +
+      ` ｜ 主动搭话：${on(initiativeEnabled())}`
   );
   console.log(`   观测台：http://localhost:${PORT}/obs.html`);
 });

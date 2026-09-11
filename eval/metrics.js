@@ -48,7 +48,7 @@ console.log("");
 console.log("  【Agent 行为】");
 line("平均每次输入模型调用数", m.agent.avgLlmCalls);
 line("平均编排轮数", m.agent.avgLoops);
-line("平均每拍发言人数", m.agent.avgBeats);
+line("平均每轮导演 beat 数", m.agent.avgBeats);
 line("平均工具调用数", m.agent.avgToolCalls);
 line("工具调用分布", Object.entries(m.agent.toolHistogram).map(([k, v]) => `${k}×${v}`).join("  ") || "—");
 line("反思触发次数", m.agent.reflections);
@@ -72,6 +72,7 @@ if (!byActor.length) {
 console.log("");
 console.log("  【安全与可靠性】");
 line("安全拦截次数", `${m.safety.blocks}（${(m.safety.blockRate * 100).toFixed(2)}%）`);
+line("骂人标记次数（只记不拦）", m.safety.abuseFlags ?? 0);
 line("失败请求", `${m.reliability.failed}（${(m.reliability.failRate * 100).toFixed(2)}%）`);
 console.log("");
 console.log("  提示：费率默认值是占位的，按官网实际价格改 .env 里的");

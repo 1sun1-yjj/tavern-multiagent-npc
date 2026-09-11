@@ -4,11 +4,12 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_NS = "default";
+const STATE_SUFFIX = process.env.TAVERN_STATE_SUFFIX || "";
 
 function profilePath(ns) {
   return ns === DEFAULT_NS
-    ? join(__dirname, "..", "memory.json")
-    : join(__dirname, "..", `memory.${ns}.json`);
+    ? join(__dirname, "..", `memory${STATE_SUFFIX}.json`)
+    : join(__dirname, "..", `memory.${ns}${STATE_SUFFIX}.json`);
 }
 
 function defaultProfile() {

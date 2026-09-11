@@ -1,15 +1,8 @@
 #!/usr/bin/env node
-import "dotenv/config";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
-
-import { detectIntent } from "../agent/intent.js";
-import { guardInput, guardOutput } from "../agent/safety.js";
-import { rankMemories } from "../agent/vectorstore.js";
-import { buildSystemPrompt, runAgentStream } from "../agent/agent.js";
-import { runMultiagentSuite } from "./multiagent.js";
-import * as CASES from "./cases.js";
+import "dotenv/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,11 +16,31 @@ const opt = (n, d) => {
 if (has("no-reflection")) process.env.REFLECTION_ENABLED = "0";
 if (has("no-safety")) process.env.SAFETY_ENABLED = "0";
 
+process.env.TAVERN_STATE_SUFFIX = has("shared-state") ? "" : opt("state-suffix", ".eval");
+
+if (has("fresh-state") && process.env.TAVERN_STATE_SUFFIX) {
+  const root = join(__dirname, "..");
+  const sfx = process.env.TAVERN_STATE_SUFFIX;
+  const stale = readdirSync(root).filter((f) => f.includes(sfx) && /^memory|^vectorstore|^traces/.test(f));
+  for (const f of stale) rmSync(join(root, f), { force: true });
+  if (stale.length) console.log(`· 已清空评测状态：${stale.join("、")}`);
+}
+
+const { detectIntent } = await import("../agent/intent.js");
+const { guardInput, guardOutput } = await import("../agent/safety.js");
+const { rankMemories } = await import("../agent/vectorstore.js");
+const { buildSystemPrompt, runAgentStream } = await import("../agent/agent.js");
+const { resolveSpeaker, buildStageEvent, getRoster } = await import("../agent/scene.js");
+const { shouldInitiate } = await import("../agent/initiative.js");
+const { runMultiagentSuite } = await import("./multiagent.js");
+const CASES = await import("./cases.js");
+
 const SUITE_DEFS = {
   intent: { label: "意图路由", mode: "offline" },
   safety: { label: "安全守卫", mode: "offline" },
   retrieval: { label: "记忆检索", mode: "offline" },
   prompt: { label: "Prompt 记忆注入", mode: "offline" },
+  staging: { label: "客人参与与主动搭话", mode: "offline" },
   persona: { label: "人设一致性", mode: "online" },
   e2e: { label: "工具调用端到端", mode: "online" },
   multiagent: { label: "多 Agent 协作", mode: "online" },
@@ -218,6 +231,83 @@ function suitePrompt() {
   return summarize("prompt", cases);
 }
 
+function suiteStaging() {
+  const cases = [];
+
+  for (const c of CASES.INITIATIVE_GATE_CASES) {
+    const r = shouldInitiate(c.args);
+    const why = [];
+    if (r.go !== c.expectGo) why.push(`go=${r.go}`);
+    if (c.expectReason && r.reason !== c.expectReason) why.push(`reason=${r.reason}`);
+    if (c.expectActor && r.actor !== c.expectActor) why.push(`actor=${r.actor}`);
+    cases.push({
+      id: c.id,
+      input: c.name,
+      expected: `${c.expectGo ? "开口" : "安静"}(${c.expectReason})`,
+      actual: why.length ? why.join("；") : `${r.go ? "开口" : "安静"}(${r.reason})`,
+      pass: why.length === 0,
+    });
+  }
+
+  for (const c of CASES.AMBIENT_ROUTE_CASES) {
+    const now = Date.now();
+    const ambient = c.opts.ambient
+      ? { actor: c.opts.ambient.actor, at: now - (c.opts.ambient.agoMs || 0) }
+      : null;
+    const got = resolveSpeaker(c.text, c.opts.target || null, {
+      ambient,
+      now,
+      lastAddressee: c.opts.lastAddressee || null,
+      present: c.opts.present || null,
+    });
+    cases.push({
+      id: c.id,
+      input: `${c.text}｜${c.name}`,
+      expected: c.expect,
+      actual: got,
+      pass: got === c.expect,
+    });
+  }
+
+  for (const c of CASES.STAGE_CASES) {
+    const ev = buildStageEvent(c.actor, c.action, c.extra);
+    const why = [];
+    for (const [k, v] of Object.entries(c.mustHave)) {
+      if (ev[k] !== v) why.push(`${k}=${JSON.stringify(ev[k])} 期望 ${JSON.stringify(v)}`);
+    }
+    if (ev.type !== "stage") why.push(`type=${ev.type}`);
+    if (ev.actor !== c.actor) why.push(`actor=${ev.actor}`);
+    cases.push({
+      id: c.id,
+      input: c.name,
+      expected: "美术接口字段齐全",
+      actual: why.length ? why.join("；") : "字段齐全",
+      pass: why.length === 0,
+    });
+  }
+
+  const roster = getRoster();
+  const host = roster.find((c) => c.id === "boss");
+  const guest = roster.find((c) => c.id === "regular");
+  cases.push({
+    id: "roster_tools",
+    input: "角色表如实报告各自的工具集",
+    expected: "胡桃 4 个 / 钟离 0 个",
+    actual: `胡桃 ${host?.tools?.length ?? "?"} 个 / 钟离 ${guest?.tools?.length ?? "?"} 个`,
+    pass: host?.tools?.length === 4 && guest?.tools?.length === 0,
+    note: "工具集写错会让越权判定形同虚设",
+  });
+
+  return summarize("staging", cases, {
+    detail: {
+      闸门用例: CASES.INITIATIVE_GATE_CASES.length,
+      路由用例: CASES.AMBIENT_ROUTE_CASES.length,
+      接口用例: CASES.STAGE_CASES.length,
+      角色表用例: 1,
+    },
+  });
+}
+
 async function suitePersona() {
   if (!hasKey()) return skipped("persona", "缺少 DEEPSEEK_API_KEY");
   const cases = [];
@@ -304,6 +394,12 @@ function pct(x) {
   return x === null || x === undefined ? "  -  " : `${(x * 100).toFixed(1)}%`;
 }
 
+function fmtDetail(key, value) {
+  if (typeof value !== "number") return value;
+  if (/率|比|占比/.test(key)) return pct(value);
+  return value;
+}
+
 function renderConsole(results, meta) {
   const lines = [];
   lines.push("");
@@ -339,7 +435,7 @@ function renderConsole(results, meta) {
     if (r.skipped || !r.detail) continue;
     lines.push(`【${r.label}】细分指标`);
     for (const [k, v] of Object.entries(r.detail)) {
-      lines.push(`   ${pad(k, 26)}${typeof v === "number" && v <= 1 ? pct(v) : v}`);
+      lines.push(`   ${pad(k, 26)}${fmtDetail(k, v)}`);
     }
     lines.push("");
   }
@@ -396,7 +492,7 @@ function renderMarkdown(report) {
     L.push("| 指标 | 数值 |");
     L.push("|---|---:|");
     for (const [k, v] of Object.entries(r.detail)) {
-      L.push(`| ${k} | ${typeof v === "number" && v <= 1 ? pct(v) : v} |`);
+      L.push(`| ${k} | ${fmtDetail(k, v)} |`);
     }
     L.push("");
   }
@@ -451,6 +547,7 @@ async function main() {
     safety: suiteSafety,
     retrieval: suiteRetrieval,
     prompt: suitePrompt,
+    staging: suiteStaging,
     persona: suitePersona,
     e2e: suiteE2E,
     multiagent: () => runMultiagentSuite(hasKey()),
@@ -467,15 +564,25 @@ async function main() {
   const report = { meta, results };
   console.log(renderConsole(results, meta));
 
-  mkdirSync(__dirname, { recursive: true });
-  writeFileSync(join(__dirname, "report.json"), JSON.stringify(report, null, 2), "utf8");
-  writeFileSync(join(__dirname, "report.md"), renderMarkdown(report), "utf8");
-  console.log(`✔ 报告已写入：${join("eval", "report.md")} 与 ${join("eval", "report.json")}\n`);
+  if (has("no-report")) {
+    console.log("· 已指定 --no-report：只跑不写，eval/report.* 保持原样\n");
+  } else {
+    mkdirSync(__dirname, { recursive: true });
+    writeFileSync(join(__dirname, "report.json"), JSON.stringify(report, null, 2), "utf8");
+    writeFileSync(join(__dirname, "report.md"), renderMarkdown(report), "utf8");
+    console.log(`✔ 报告已写入：${join("eval", "report.md")} 与 ${join("eval", "report.json")}\n`);
+  }
 
   process.exitCode = results.some((r) => !r.skipped && r.failed > 0) ? 1 : 0;
 }
 
-main().catch((e) => {
-  console.error("\n✗ 评测执行失败：", e);
-  process.exitCode = 2;
-});
+export { renderMarkdown, renderConsole };
+
+const isEntry = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntry) {
+  main().catch((e) => {
+    console.error("\n✗ 评测执行失败：", e);
+    process.exitCode = 2;
+  });
+}

@@ -1,9 +1,9 @@
-import { appendFileSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, existsSync, writeFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TRACE_PATH = join(__dirname, "..", "traces.jsonl");
+const TRACE_PATH = join(__dirname, "..", `traces${process.env.TAVERN_STATE_SUFFIX || ""}.jsonl`);
 const RING_SIZE = Number(process.env.TRACE_RING_SIZE || 60);
 
 const PRICE_INPUT_PER_M = Number(process.env.PRICE_INPUT_PER_M || 2);
@@ -32,11 +32,12 @@ function actorStats(trace, actor) {
   return trace.actors[key];
 }
 
-export function startTrace({ sessionId, userText, sceneId = null }) {
+export function startTrace({ sessionId, userText, sceneId = null, origin = "chat" }) {
   return {
     id: newTraceId(),
     sessionId: sessionId || "default",
     sceneId,
+    origin,
     startedAt: new Date().toISOString(),
     userText,
     spans: [],
@@ -54,8 +55,12 @@ export function startTrace({ sessionId, userText, sceneId = null }) {
       reflections: 0,
       reflectionRetries: 0,
       safetyBlocks: 0,
+      abuseFlags: 0,
       reactCalls: 0,
       reactsSpoke: 0,
+      followupReacts: 0,
+      initiativeCalls: 0,
+      initiativeSpoke: 0,
       beats: 0,
       directorCalls: 0,
       criticCalls: 0,
@@ -80,10 +85,12 @@ export function addSpan(trace, span) {
     detail: span.detail === undefined ? null : span.detail,
   };
   trace.spans.push(entry);
-  const st = actorStats(trace, span.actor);
-  st.spans += 1;
-  if (span.kind === "llm") st.llmCalls += 1;
-  if (span.kind === "tool") st.toolCalls += 1;
+  if (entry.actor) {
+    const st = actorStats(trace, entry.actor);
+    st.spans += 1;
+    if (span.kind === "llm") st.llmCalls += 1;
+    if (span.kind === "tool") st.toolCalls += 1;
+  }
   return entry;
 }
 
@@ -149,9 +156,10 @@ export function recordMemory(trace, { actor, op, count = 0, latencyMs = 0, detai
   });
 }
 
-export function recordSafety(trace, { actor, stage, action, reason = null, latencyMs = 0, reply = null }) {
+export function recordSafety(trace, { actor, stage, action, reason = null, latencyMs = 0, reply = null, abuse = false }) {
   if (action !== "allow") trace.counters.safetyBlocks += 1;
-  trace.safety[stage] = { action, reason };
+  if (abuse) trace.counters.abuseFlags = (trace.counters.abuseFlags || 0) + 1;
+  trace.safety[stage] = { action, reason, abuse: Boolean(abuse) };
   trace.timing.safetyMs += Math.round(latencyMs || 0);
   return addSpan(trace, {
     kind: "safety",
@@ -159,7 +167,7 @@ export function recordSafety(trace, { actor, stage, action, reason = null, laten
     name: `${stage}_guard`,
     durMs: latencyMs,
     ok: action !== "block",
-    detail: { action, reason, reply: reply ? String(reply).slice(0, 200) : null },
+    detail: { action, reason, abuse: Boolean(abuse), reply: reply ? String(reply).slice(0, 200) : null },
   });
 }
 
@@ -193,8 +201,15 @@ export function recordAuxLLM(trace, { actor, usage, latencyMs = 0 }) {
   st.completionTokens += usage?.completion_tokens || 0;
 }
 
-export function recordReact(trace, { actor }) {
+export function recordReact(trace, { actor, phase = "parallel" }) {
   trace.counters.reactCalls += 1;
+  if (phase === "followup") trace.counters.followupReacts += 1;
+  return actor;
+}
+
+export function recordInitiative(trace, { actor, phase = "plan" }) {
+  if (phase === "speak") trace.counters.initiativeSpoke += 1;
+  else trace.counters.initiativeCalls += 1;
   return actor;
 }
 
@@ -273,6 +288,7 @@ function summarize(t) {
   return {
     id: t.id,
     sceneId: t.sceneId || null,
+    origin: t.origin || "chat",
     startedAt: t.startedAt,
     userText: String(t.userText || "").slice(0, 60),
     totalMs: t.totals?.totalMs ?? null,
@@ -286,7 +302,10 @@ function summarize(t) {
     loops: t.totals?.loops ?? 0,
     reflections: t.totals?.reflections ?? 0,
     reflectionRetries: t.totals?.reflectionRetries ?? 0,
+    followupReacts: t.totals?.followupReacts ?? 0,
+    initiativeCalls: t.totals?.initiativeCalls ?? 0,
     safetyBlocks: t.totals?.safetyBlocks ?? 0,
+    abuseFlags: t.totals?.abuseFlags ?? 0,
     ok: t.ok,
     spanCount: t.spans?.length ?? 0,
   };
@@ -330,11 +349,16 @@ export function metrics({ fromDisk = false } = {}) {
   let loops = 0;
   let llmCalls = 0;
   let reactCalls = 0;
+  let followupReacts = 0;
   let beats = 0;
   let reflections = 0;
   let retries = 0;
   let safetyBlocks = 0;
+  let abuseFlags = 0;
   let failed = 0;
+  let initiativeTurns = 0;
+  let initiativeCalls = 0;
+  let initiativeSpoke = 0;
 
   for (const t of source) {
     const x = t.totals || {};
@@ -350,10 +374,17 @@ export function metrics({ fromDisk = false } = {}) {
     loops += x.loops || 0;
     llmCalls += x.llmCalls || 0;
     reactCalls += x.reactCalls || 0;
+    followupReacts += x.followupReacts || 0;
     beats += x.beats || 0;
     reflections += x.reflections || 0;
     retries += x.reflectionRetries || 0;
     safetyBlocks += x.safetyBlocks || 0;
+    abuseFlags += x.abuseFlags || 0;
+    if ((t.origin || "chat") === "ambient") {
+      initiativeTurns += 1;
+      initiativeCalls += x.initiativeCalls || 0;
+      initiativeSpoke += x.initiativeSpoke || 0;
+    }
     if (t.ok === false) failed += 1;
 
     for (const [actor, st] of Object.entries(t.actors || {})) {
@@ -391,20 +422,32 @@ export function metrics({ fromDisk = false } = {}) {
       avgToolCalls: Number((toolCalls / n).toFixed(2)),
       avgBeats: Number((beats / n).toFixed(2)),
       reactCalls,
+      followupReacts,
       reflections,
       reflectionRetries: retries,
       toolHistogram: toolHist,
       byActor: actorAgg,
     },
-    safety: { blocks: safetyBlocks, blockRate: Number((safetyBlocks / n).toFixed(4)) },
+    initiative: {
+      turns: initiativeTurns,
+      planCalls: initiativeCalls,
+      spoke: initiativeSpoke,
+      avgCallsPerTurn: initiativeTurns ? Number((initiativeCalls / initiativeTurns).toFixed(2)) : 0,
+    },
+    safety: { blocks: safetyBlocks, blockRate: Number((safetyBlocks / n).toFixed(4)), abuseFlags },
     reliability: { failed, failRate: Number((failed / n).toFixed(4)) },
   };
 }
 
+let diskCache = { key: null, value: [] };
+
 function loadAllFromDisk() {
   try {
     if (!existsSync(TRACE_PATH)) return [];
-    return readFileSync(TRACE_PATH, "utf8")
+    const st = statSync(TRACE_PATH);
+    const key = `${st.size}:${st.mtimeMs}`;
+    if (diskCache.key === key) return diskCache.value;
+    const value = readFileSync(TRACE_PATH, "utf8")
       .split("\n")
       .filter(Boolean)
       .map((l) => {
@@ -415,6 +458,8 @@ function loadAllFromDisk() {
         }
       })
       .filter(Boolean);
+    diskCache = { key, value };
+    return value;
   } catch {
     return [];
   }
@@ -422,6 +467,7 @@ function loadAllFromDisk() {
 
 export function resetTraces({ alsoDisk = false } = {}) {
   ring.length = 0;
+  diskCache = { key: null, value: [] };
   if (alsoDisk) {
     try {
       writeFileSync(TRACE_PATH, "", "utf8");

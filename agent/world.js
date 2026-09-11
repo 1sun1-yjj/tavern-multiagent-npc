@@ -1,5 +1,7 @@
+const DEFAULT_STOCK = { 基酒: 3, 配料: 5, 装饰: 8, 冰杯: 10 };
+
 const state = {
-  stock: { coffee: 3, milk: 5, sugar: 8, cup: 10 },
+  stock: { ...DEFAULT_STOCK },
   cash: 0,
   servedToday: 0,
   clock: { turn: 0, phase: "夜晚" },
@@ -65,7 +67,7 @@ export function adjustRelationship(actorId, delta) {
 }
 
 export function resetWorld() {
-  state.stock = { coffee: 3, milk: 5, sugar: 8, cup: 10 };
+  state.stock = { ...DEFAULT_STOCK };
   state.cash = 0;
   state.servedToday = 0;
   state.clock = { turn: 0, phase: "夜晚" };

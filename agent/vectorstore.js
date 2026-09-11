@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { embedTexts } from "./embed.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const STORE_PATH = join(__dirname, "..", "vectorstore.json");
+export const STATE_SUFFIX = process.env.TAVERN_STATE_SUFFIX || "";
+const STORE_PATH = join(__dirname, "..", `vectorstore${STATE_SUFFIX}.json`);
 const MAX_MEMORIES = 200;
 const DEFAULT_TOP_K = 4;
 const DEFAULT_THRESHOLD = 0.25;
